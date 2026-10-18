@@ -71,7 +71,10 @@ def main() -> int:
     )
     result = assemble_and_export_context(
         state=state, session_inputs=inputs, export_root='exports',
-        settings=ExportSettings(transcription='off'),
+        settings=ExportSettings(
+            transcription=sys.argv[1] if len(sys.argv) > 1 else 'off',
+            asr_model_dir='./data/models/asr' if len(sys.argv) > 1 else None,
+        ),
     )
     print(json.dumps({
         'export_dir': result.export_dir, 'markdown': result.markdown_path,

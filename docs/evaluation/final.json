@@ -1,8 +1,15 @@
 {
   "schema_version": 1,
-  "timestamp": "2026-10-18T11:37:53.947558+00:00",
+  "timestamp": "2026-10-18T12:14:06.313752+00:00",
   "split": "test",
   "audio_policy": "S2-audio FAIL reale documentato (run-1/run-2); scope text-only per decisione utente 2026-10-18",
+  "commit": "70ce01f1bcda60dacc0995d63a93d535ddfc9496",
+  "lockfile_checksum": "f6c94c6728fec09193bb5daacd0de8d2e3be1e225ef1273c417522d26e195630",
+  "hardware": {
+    "platform": "linux",
+    "cuda_available": true,
+    "gpu": "NVIDIA RTX 5000 Ada Generation Laptop GPU"
+  },
   "space": {
     "model_id": "google/embeddinggemma-2",
     "revision": "914f7f89142e33e77833254d9c9b90c3cef7303b",
@@ -14,7 +21,21 @@
     "score_mode": "cosine",
     "min_cosine": 0.7,
     "min_final": 0.7,
-    "gamma": 0.6
+    "gamma": 0.6,
+    "activation_threshold": 0.5
+  },
+  "config": {
+    "repeat": 3,
+    "device": "auto",
+    "search": {
+      "top_k": 5,
+      "score_mode": "cosine",
+      "gamma": 0.6,
+      "activation_threshold": 0.5,
+      "min_cosine": 0.7,
+      "min_final": 0.7
+    },
+    "tokenizer_revision": "914f7f89142e33e77833254d9c9b90c3cef7303b"
   },
   "repeat": 3,
   "metrics": {
@@ -24,52 +45,76 @@
       "negative_abstention": 1.0
     }
   },
+  "metrics_per_format": {
+    "markdown": {
+      "hit_at_5": 1.0
+    },
+    "pdf": {
+      "hit_at_5": 1.0
+    },
+    "image": {
+      "hit_at_5": 1.0
+    },
+    "video": {
+      "hit_at_5": 1.0
+    }
+  },
+  "ablation": {
+    "cosine_no_threshold": {
+      "hit_at_5": 1.0,
+      "mrr_at_5": 1.0
+    },
+    "zscore_no_threshold": {
+      "hit_at_5": 1.0,
+      "mrr_at_5": 0.80625
+    }
+  },
   "timings": {
-    "definition": "latency_sec = fine input originale -> evento pubblicato (debounce/VAD e coda inclusi, 08 §3)",
+    "definition": "latency_sec = fine input originale -> evento pubblicato via agent_text (debounce e coda inclusi; percorso mic_audio non misurato: scope text-only)",
     "samples": 39,
     "latency_raw_sec": [
       1.033,
+      1.033,
       1.034,
       1.034,
-      1.034,
-      1.034,
+      1.035,
+      1.035,
       1.035,
       1.036,
       1.036,
       1.036,
-      1.036,
-      1.036,
-      1.036,
-      1.036,
-      1.036,
-      1.036,
       1.037,
       1.037,
       1.037,
-      1.038,
       1.038,
       1.038,
       1.039,
       1.04,
       1.04,
       1.04,
+      1.04,
+      1.04,
+      1.04,
+      1.04,
+      1.04,
+      1.04,
+      1.041,
+      1.041,
+      1.041,
+      1.041,
       1.042,
       1.042,
       1.042,
-      1.042,
-      1.042,
-      1.042,
-      1.042,
+      1.043,
       1.043,
       1.043,
       1.044,
-      1.045,
-      1.046,
-      1.047,
-      1.052
+      1.044,
+      1.044,
+      1.045
     ],
-    "p50_sec": 1.038,
-    "p95_sec": 1.0468
+    "p50_sec": 1.0397,
+    "p95_sec": 1.0445
   },
   "queries": [
     {
@@ -101,7 +146,7 @@
             "page_num": null,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323427.812612
+            "created_at": 1792325581.0763607
           },
           "cosine_score": 0.8438061028718948,
           "z_score": 1.3900295269131486,
@@ -126,7 +171,7 @@
             "page_num": null,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323427.8127413
+            "created_at": 1792325581.076492
           },
           "cosine_score": 0.7708673179149628,
           "z_score": 0.622406371992178,
@@ -151,7 +196,7 @@
             "page_num": null,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323427.917924
+            "created_at": 1792325581.182518
           },
           "cosine_score": 0.7432441413402557,
           "z_score": 0.33169423627815375,
@@ -176,7 +221,7 @@
             "page_num": null,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323427.6343694
+            "created_at": 1792325580.8965597
           },
           "cosine_score": 0.7206277847290039,
           "z_score": 0.9590695798397064,
@@ -201,7 +246,7 @@
             "page_num": null,
             "start_sec": 0.0,
             "end_sec": 45.04,
-            "created_at": 1792323432.240909
+            "created_at": 1792325585.5849144
           },
           "cosine_score": 0.7143437266349792,
           "z_score": 0.410458048184712,
@@ -242,7 +287,7 @@
             "page_num": null,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323427.8667855
+            "created_at": 1792325581.1302624
           },
           "cosine_score": 0.8230381906032562,
           "z_score": 1.8288732343034668,
@@ -267,7 +312,7 @@
             "page_num": null,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323427.6343694
+            "created_at": 1792325580.8965597
           },
           "cosine_score": 0.713140219449997,
           "z_score": 1.3492964208126068,
@@ -292,7 +337,7 @@
             "page_num": null,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323427.8668835
+            "created_at": 1792325581.1303613
           },
           "cosine_score": 0.7044746577739716,
           "z_score": 0.49279579032565396,
@@ -334,7 +379,7 @@
             "page_num": 2,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323428.0302193
+            "created_at": 1792325581.2955177
           },
           "cosine_score": 0.8403037190437317,
           "z_score": 2.76078633933887,
@@ -359,7 +404,7 @@
             "page_num": null,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323427.8668835
+            "created_at": 1792325581.1303613
           },
           "cosine_score": 0.7266146838665009,
           "z_score": 1.3419574495504656,
@@ -384,7 +429,7 @@
             "page_num": null,
             "start_sec": 0.0,
             "end_sec": 45.04,
-            "created_at": 1792323432.240909
+            "created_at": 1792325585.5849144
           },
           "cosine_score": 0.7067344188690186,
           "z_score": 0.24707804123560662,
@@ -426,7 +471,7 @@
             "page_num": 3,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323428.2050972
+            "created_at": 1792325581.4729288
           },
           "cosine_score": 0.7769122272729874,
           "z_score": 2.0875367820262913,
@@ -451,7 +496,7 @@
             "page_num": 2,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323428.2046666
+            "created_at": 1792325581.4724984
           },
           "cosine_score": 0.7439483404159546,
           "z_score": 1.4282590448856358,
@@ -476,7 +521,7 @@
             "page_num": null,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323427.917924
+            "created_at": 1792325581.182518
           },
           "cosine_score": 0.718203067779541,
           "z_score": 1.1974544326464343,
@@ -516,7 +561,7 @@
             "page_num": null,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323427.1739545
+            "created_at": 1792325580.4267151
           },
           "cosine_score": 0.8345735967159271,
           "z_score": 1.72892948636188,
@@ -541,7 +586,7 @@
             "page_num": 1,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323428.203977
+            "created_at": 1792325581.4719055
           },
           "cosine_score": 0.7144818305969238,
           "z_score": 1.08095145225525,
@@ -584,7 +629,7 @@
             "page_num": null,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323427.6343694
+            "created_at": 1792325580.8965597
           },
           "cosine_score": 0.8253543823957443,
           "z_score": 1.7281623495806717,
@@ -609,7 +654,7 @@
             "page_num": null,
             "start_sec": 0.0,
             "end_sec": 45.04,
-            "created_at": 1792323432.240909
+            "created_at": 1792325585.5849144
           },
           "cosine_score": 0.7500176876783371,
           "z_score": 0.5132202804088593,
@@ -634,7 +679,7 @@
             "page_num": null,
             "start_sec": 0.0,
             "end_sec": 45.04,
-            "created_at": 1792323433.1508403
+            "created_at": 1792325586.5159597
           },
           "cosine_score": 0.7327141463756561,
           "z_score": 0.16714945435523987,
@@ -659,7 +704,7 @@
             "page_num": null,
             "start_sec": 0.0,
             "end_sec": 45.04,
-            "created_at": 1792323431.284552
+            "created_at": 1792325584.535497
           },
           "cosine_score": 0.7289273738861084,
           "z_score": 0.09141400456428528,
@@ -684,7 +729,7 @@
             "page_num": null,
             "start_sec": 0.0,
             "end_sec": 45.0,
-            "created_at": 1792323429.1199684
+            "created_at": 1792325582.374895
           },
           "cosine_score": 0.714975893497467,
           "z_score": -0.18761560320854187,
@@ -726,7 +771,7 @@
             "page_num": null,
             "start_sec": 40.0,
             "end_sec": 85.0,
-            "created_at": 1792323429.6030893
+            "created_at": 1792325582.8863957
           },
           "cosine_score": 0.7183979153633118,
           "z_score": 0.410516162713368,
@@ -751,7 +796,7 @@
             "page_num": null,
             "start_sec": 80.0,
             "end_sec": 95.04,
-            "created_at": 1792323430.1177936
+            "created_at": 1792325583.378847
           },
           "cosine_score": 0.7058410048484802,
           "z_score": 0.15937795241673713,
@@ -791,7 +836,7 @@
             "page_num": null,
             "start_sec": 0.0,
             "end_sec": 45.04,
-            "created_at": 1792323431.284552
+            "created_at": 1792325584.535497
           },
           "cosine_score": 0.7162590026855469,
           "z_score": 0.7049156228701281,
@@ -816,7 +861,7 @@
             "page_num": 2,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323428.0302193
+            "created_at": 1792325581.2955177
           },
           "cosine_score": 0.7043122351169586,
           "z_score": 0.8072843551635733,
@@ -875,8 +920,8 @@
     "S1_text": true,
     "S2_text": true,
     "S2_audio": "FAIL reale documentato (scope text-only per decisione utente)",
-    "S3": true,
+    "S3_text": true,
     "S4_text": true,
-    "S5": true
+    "S5_text": true
   }
 }

@@ -678,6 +678,9 @@ def decode_control_response(raw: str) -> ControlResponse:
 
 
 def make_memory_id(file_path: str, chunk_key: str, content_sha256: str) -> str:
-    canonical = str(os.path.abspath(file_path))
+    """Identità contrattuale 07 §3: Path.resolve(), non abspath (normalizza symlink)."""
+    from pathlib import Path  # noqa: PLC0415
+
+    canonical = str(Path(file_path).resolve())
     raw = chr(0).join((canonical, chunk_key, content_sha256))
     return hashlib.sha256(raw.encode('utf-8')).hexdigest()

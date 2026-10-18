@@ -17,6 +17,7 @@ CLI di consegna (08 §4):
 """
 
 import argparse
+import hashlib
 import math
 import json
 import sys
@@ -238,6 +239,28 @@ def run_calibration(args: argparse.Namespace, manifest: dict, space: SpaceSpec) 
     return 0
 
 
+def _hardware_info() -> dict:
+    info = {'platform': sys.platform}
+    try:
+        import torch  # noqa: PLC0415
+
+        info['cuda_available'] = torch.cuda.is_available()
+        info['gpu'] = torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
+    except Exception:  # noqa: BLE001 - informazione di contesto, mai fatale
+        info['cuda_available'] = False
+    return info
+
+
+def _git_commit() -> str | None:
+    import subprocess  # noqa: PLC0415
+
+    try:
+        result = subprocess.run(['git', 'rev-parse', 'HEAD'], capture_output=True, timeout=10, cwd='.')
+        return result.stdout.decode().strip() if result.returncode == 0 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def run_test(args: argparse.Namespace, manifest: dict, space: SpaceSpec) -> int:
     manifest_path = Path(args.manifest).resolve()
     file_names = _load_file_names(manifest)
@@ -254,12 +277,38 @@ def run_test(args: argparse.Namespace, manifest: dict, space: SpaceSpec) -> int:
         'activation_threshold': frozen['activation_threshold'],
         'min_cosine': frozen['min_cosine'], 'min_final': frozen['min_final'],
     }
-    harness = _make_harness(args, manifest_path, space, search)
     queries = [q for q in manifest['queries'] if q['split'] == 'test']
+    positives = [q for q in queries if q['relevant']]
+    harness = _make_harness(args, manifest_path, space, search)
     try:
         outcomes = harness.run(queries=queries, source='agent_text', repeat=args.repeat)
     finally:
         harness.close()
+
+    # Ablation 08 §3: ranking coseno/Z-score SENZA soglie sulla stessa run reale.
+    ablation = {}
+    ablation_harness = _make_harness(args, manifest_path, space, _unfiltered_search('zscore'))
+    try:
+        raw = ablation_harness.run(queries=positives, source='agent_text', repeat=1)
+    finally:
+        ablation_harness.close()
+    by_query = {}
+    for outcome in raw:
+        by_query.setdefault(outcome['query_id'], []).append(outcome)
+    for mode in ('cosine', 'zscore'):
+        ranked_hits = []
+        for query in positives:
+            items = next((o['results'] for o in by_query.get(query['id'], []) if o['error'] is None), [])
+            if mode == 'zscore':
+                items = sorted(items, key=lambda i: -i['z_score'])[:5]
+            else:
+                items = sorted(items, key=lambda i: -i['cosine_score'])[:5]
+            ranked_hits.append(hits_for_query(items, query['relevant'], file_names))
+        ranks = [next((i + 1 for i, hit in enumerate(row) if hit), 0) for row in ranked_hits]
+        ablation[f'{mode}_no_threshold'] = {
+            'hit_at_5': sum(rank > 0 for rank in ranks) / len(ranks),
+            'mrr_at_5': sum(1 / rank if rank else 0 for rank in ranks) / len(ranks),
+        }
     per_query, ranked_hits, negative_counts, failures = [], [], [], 0
     latencies: list[float] = []
     by_query: dict[str, list[dict]] = {}
@@ -296,31 +345,58 @@ def run_test(args: argparse.Namespace, manifest: dict, space: SpaceSpec) -> int:
         return ordered[index - 1]
 
     timings = {
-        'definition': 'latency_sec = fine input originale -> evento pubblicato (debounce/VAD e coda inclusi, 08 §3)',
+        'definition': 'latency_sec = fine input originale -> evento pubblicato via agent_text '
+                      '(debounce e coda inclusi; percorso mic_audio non misurato: scope text-only)',
         'samples': len(latencies),
         'latency_raw_sec': sorted(round(value, 3) for value in latencies),
         'p50_sec': nearest_rank(latencies, 0.50),
         'p95_sec': nearest_rank(latencies, 0.95),
     }
+    suffix_to_modality = {'.md': 'markdown', '.pdf': 'pdf', '.png': 'image', '.jpg': 'image',
+                          '.jpeg': 'image', '.mp4': 'video'}
+    file_id_to_modality = {
+        entry['id']: suffix_to_modality.get(Path(entry['path']).suffix.lower())
+        for entry in manifest['files']
+    }
+    per_format_hits: dict[str, list[bool]] = {}
+    for query, entry in zip([q for q in queries if q['relevant']],
+                            [q for q in per_query if q['relevant']]):
+        for gold in query['relevant']:
+            modality = file_id_to_modality.get(gold['file_id'])
+            if modality:
+                per_format_hits.setdefault(modality, []).append(any(entry['hits']))
+    metrics_per_format = {
+        modality: {'hit_at_5': sum(hits) / len(hits)}
+        for modality, hits in per_format_hits.items()
+    }
     gates = {
         'S1_text': hit_rate >= 0.80,
         'S2_text': len(positives) > 0 and hit_rate >= 7 / 8,
         'S2_audio': 'FAIL reale documentato (scope text-only per decisione utente)',
-        'S3': len(positives) > 0 and all(any(h for h in q['hits']) for q in per_query if q['relevant']),
+        'S3_text': len(per_format_hits) >= 4 and all(sum(h) > 0 for h in per_format_hits.values()),
         'S4_text': abstention >= 4 / 5,
-        'S5': timings['p95_sec'] is not None and timings['p95_sec'] <= 5.0,
+        'S5_text': timings['p95_sec'] is not None and timings['p95_sec'] <= 5.0,
     }
     report = {
         'schema_version': SCHEMA_VERSION,
         'timestamp': datetime.now(timezone.utc).isoformat(),
         'split': 'test',
         'audio_policy': AUDIO_POLICY,
+        'commit': _git_commit(),
+        'lockfile_checksum': hashlib.sha256(Path('uv.lock').read_bytes()).hexdigest()
+        if Path('uv.lock').exists() else None,
+        'hardware': _hardware_info(),
         'space': {'model_id': space.model_id, 'revision': space.revision,
                   'space_id': space.space_id, 'backend': space.backend},
         'corpus_checksum': manifest['corpus_checksum'],
-        'calibration': {k: frozen[k] for k in ('score_mode', 'min_cosine', 'min_final', 'gamma')},
+        'calibration': {k: frozen[k] for k in
+                        ('score_mode', 'min_cosine', 'min_final', 'gamma', 'activation_threshold')},
+        'config': {'repeat': args.repeat, 'device': args.device, 'search': search,
+                   'tokenizer_revision': space.revision},
         'repeat': args.repeat,
         'metrics': {'agent_text': source_metrics},
+        'metrics_per_format': metrics_per_format,
+        'ablation': ablation,
         'timings': timings,
         'queries': per_query,
         'counts': {'positives': len(positives), 'negatives': len(negatives), 'failures': failures},
