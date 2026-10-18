@@ -46,7 +46,7 @@ dipendenze venv e corpus fixture comunicati a ciascuno. Tag attesi:
 | Agent-2-Inference | I1–I4 | ✅ CHIUSO (nessun residuo) | Fase 1: text PASS / audio FAIL documentato; revisione congelata; bank consegnato e importato; disponibile per supporto |
 | Agent-3-Ingestion | G1–G4 | 🟢 57 test verificati (fix TIMEOUT + stack reale mock) | VIA al run brain-real.db trattenuto fino a fine re-probe I4 (isolamento misure) |
 | Agent-4-Sensors | L1–L4 | ✅ TASK_DONE accettato | 94 test + ruff verificati da me; committato; ReplayHarness allineata a evaluate.py; verifiche congiunte Fase 4 dopo gate reale |
-| Agent-5-HUD | H1–H4 | 🟢 H1+H2 ✅ verificate | 64 test rieseguiti da me (incl. clip video con ffmpeg reale); H3 trascrizione in corso; mpv assente (gate manuale futuro) |
+| Agent-5-HUD | H1–H4 | 🟢 H1+H2+H3 ✅ verificate | H3 chiuso: 9 transcription + 81 ordinari verificati da me; smoke pipeline reale (termini sopravvissuti C2/C3) + limite ASR su TTS dichiarato in README; atteso TASK_DONE formale H4 |
 
 ## O3–O5 — Launcher, gate, verifica finale
 
