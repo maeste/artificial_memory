@@ -25,7 +25,9 @@ dependencies = [
 
 [project.optional-dependencies]
 # Trascrizione ASR locale, richiesta solo con --transcription local (default off).
-asr = ["faster-whisper"]
+# av 15.0.x: faster-whisper 1.2.1 usa av.open(metadata_errors=...), rimossa
+# dopo la 15; le 14.x non hanno wheel cp312 (sdist richiede ffmpeg-devel).
+asr = ["faster-whisper", "av>=15.0.0,<15.1"]
 
 [dependency-groups]
 dev = ["pytest"]
