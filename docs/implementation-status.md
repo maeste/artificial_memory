@@ -55,7 +55,8 @@ dipendenze venv e corpus fixture comunicati a ciascuno. Tag attesi:
 | O3 test launcher con figli fake | ✅ | `tests/e2e/test_launcher.py`: timeout startup, morte figlio indispensabile, SIGINT+teardown inverso senza orfani, lock DB, SPACE_MISMATCH (5 test) |
 | O3 CLI `run_poc.py` | ✅ | flag richiesti (watch-dir/backend/agent-log/agent-format/no-mic/device/db/show-all/headless/calibration/transcription/asr-model-dir); revisione reale richiesta o da data/probe-config.json |
 | O3 CLI `python -m src.control` | ✅ | snapshot/pin/unpin/new-session/mic on\|off con retry stesso command_id |
-| O3 quickstart | ⏳ | scritto alla consegna con i comandi verificati end-to-end |
+| O3 quickstart | 🟢 bozza | `docs/quickstart.md`; comandi consolidati a consegna |
+| O3/O5 smoke headless reale | 🟡 bloccato su serve | launcher corretto (`-m src.inference serve`); watcher e runner verificati attivi col config integrale (preemptive check); `serve` rifiuta i campi degli altri figli → FIX_REQUEST #2 ad Agent-2 (contratto §6: config passato integralmente) |
 | O4 gate incrementali | 🟢 avanzato | Fase 1: testo PASS / audio FAIL documentato (run-1+2). Calibrazione congelata cosine/0.70/0.70 (griglia estesa a 0.70, direzione più severa, criteri invariati). **Gate finale text: 8/8 hit rank 1 (S1/S2/S3 PASS), astensione 5/5 (S4 PASS), S5 PASS (p50 1.038 s / p95 1.047 s su 39 campioni, debounce incluso)**. Checklist manuale creata in docs/evaluation/manual.md. |
 | O5 verifica finale | non avviato | — |
 
