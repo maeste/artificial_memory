@@ -48,22 +48,56 @@ uv run python -m src.sensors.replay --config data/probe-config.json \
   --split calibration --source agent_text --repeat 3
 ```
 
-## Collegare una sessione agente reale
+## Collegare una sessione agente reale — bridge definitivo (verifica congiunta, text-only)
 
-Bridge universale PTY provato sul passo (Ubuntu/Fedora con `util-linux`):
+Procedura definitiva per la verifica congiunta con l'Orchestratore (gate PRD
+Fase 4, «un messaggio in una sessione agente reale produce suggerimenti»).
+Decisione utente: verifica **text-only** — il runner parte con `--no-mic`.
+
+**Terminale 1 — bridge PTY** (il terminale in cui si vuole lavorare; tutto il
+traffico del tool finisce nel log):
 
 ```bash
-mkdir -p logs
-script -q -f -c 'claude' ./logs/agent-session.log
+mkdir -p /home/maeste/project/artificial_memory/logs
+script -q -f -c 'claude' /home/maeste/project/artificial_memory/logs/agent-session.log
 ```
 
-Va eseguito nel terminale in cui si vuole lavorare; al runner si passa il path
-assoluto di quel log con `--agent-format plain`. Il launcher costruisce il comando
-dal path assoluto del log scelto. Per un log strutturato usare il suo path
-esplicito e `--agent-format claude-jsonl` (es. `~/.claude/projects/<progetto>/<sessione>.jsonl`).
+**Terminale 2 — runner** (il launcher usa questi stessi argomenti):
+
+```bash
+uv run python -m src.sensors.runner \
+  --config /home/maeste/project/artificial_memory/data/config.json \
+  --agent-log /home/maeste/project/artificial_memory/logs/agent-session.log \
+  --agent-format plain \
+  --no-mic
+```
+
+**Verifica**: nel terminale 1 si invia un nuovo messaggio all'agente; il tail
+lo rileva (debounce 1 s), il runner lo usa come query e pubblica l'evento
+`live.state` con i ricordi. Controllo dal vivo con la CLI condivisa:
+
+```bash
+uv run python -m src.control \
+  --runtime "$XDG_RUNTIME_DIR/artificial-memory/<run_id>" snapshot
+```
+
+Da osservare nel gate: il ricordo pertinente nei risultati, nessuna query
+dallo storico preesistente all'avvio (il tail parte dal fondo), pulizia
+dell'input nel testo consegnato (ANSI/repaint rimossi). Pulizia e assenza di
+query dallo storico sono coperte anche dai test L2. Sostituire `claude` con il
+tool realmente installato è un esempio di bridge PTY, non una dichiarazione di
+supporto già provato. Per un log strutturato usare il suo path esplicito e
+`--agent-format claude-jsonl` (es. `~/.claude/projects/<progetto>/<sessione>.jsonl`).
 Il runner non legge mai indiscriminatamente tutte le sessioni utente: solo il
 path esplicito ricevuto. L'avvio legge dal fondo del file: la conversazione
 storica non diventa query live.
+
+Nota sul canale audio: la pipeline mic (VAD, segmentazione, WAV, replay audio)
+resta implementata e dimostrabile a livello unitario e di integrazione mock
+(`uv run pytest src/sensors -k 'mic or Vad or audio' -q`); ai gate di
+valutazione il canale audio è dichiarato FAIL per decisione utente
+(eccezione S2), quindi la calibrazione O4 e il final gate T1–T8 usano solo
+`--source agent_text`.
 
 ## Microfono
 
@@ -113,6 +147,9 @@ controllato del segmento pendente; la sorgente testuale resta attiva.
 - Nessun ASR nel percorso live; i WAV nativi sono query. Nessuna indicizzazione
   automatica del live nell'archivio.
 - La CLI `--replay-log` è diagnostica: legge un log-fixture dall'inizio.
+- Il tokenizer del replay è il loader condiviso dell'Ingestion
+  (`src.ingestion.watcher.load_tokenizer`: mock a caratteri, reale via
+  transformers sulla revisione dello SpaceSpec) — nessuna duplicazione locale.
 
 ## Smoke hardware (manuale, marcato `hardware`)
 

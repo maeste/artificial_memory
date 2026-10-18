@@ -17,6 +17,7 @@ CLI di consegna (08 §4):
 """
 
 import argparse
+import math
 import json
 import sys
 from datetime import datetime, timezone
@@ -260,9 +261,12 @@ def run_test(args: argparse.Namespace, manifest: dict, space: SpaceSpec) -> int:
     finally:
         harness.close()
     per_query, ranked_hits, negative_counts, failures = [], [], [], 0
+    latencies: list[float] = []
     by_query: dict[str, list[dict]] = {}
     for outcome in outcomes:
         by_query.setdefault(outcome['query_id'], []).append(outcome)
+        if outcome.get('error') is None and outcome.get('latency_sec') is not None:
+            latencies.append(float(outcome['latency_sec']))
     for query in queries:
         items = by_query.get(query['id'], [])
         good = [o for o in items if o['error'] is None]
@@ -283,13 +287,28 @@ def run_test(args: argparse.Namespace, manifest: dict, space: SpaceSpec) -> int:
     source_metrics = metrics(ranked_hits, negative_counts)
     hit_rate = source_metrics['hit_at_5']
     abstention = source_metrics['negative_abstention']
+
+    def nearest_rank(samples: list[float], percentile: float) -> float | None:
+        if not samples:
+            return None
+        ordered = sorted(samples)
+        index = max(1, math.ceil(percentile * len(ordered)))
+        return ordered[index - 1]
+
+    timings = {
+        'definition': 'latency_sec = fine input originale -> evento pubblicato (debounce/VAD e coda inclusi, 08 §3)',
+        'samples': len(latencies),
+        'latency_raw_sec': sorted(round(value, 3) for value in latencies),
+        'p50_sec': nearest_rank(latencies, 0.50),
+        'p95_sec': nearest_rank(latencies, 0.95),
+    }
     gates = {
         'S1_text': hit_rate >= 0.80,
         'S2_text': len(positives) > 0 and hit_rate >= 7 / 8,
         'S2_audio': 'FAIL reale documentato (scope text-only per decisione utente)',
         'S3': len(positives) > 0 and all(any(h for h in q['hits']) for q in per_query if q['relevant']),
         'S4_text': abstention >= 4 / 5,
-        'S5': 'misurato nella run timing dedicata (runner/Storage, end-to-end)',
+        'S5': timings['p95_sec'] is not None and timings['p95_sec'] <= 5.0,
     }
     report = {
         'schema_version': SCHEMA_VERSION,
@@ -302,6 +321,7 @@ def run_test(args: argparse.Namespace, manifest: dict, space: SpaceSpec) -> int:
         'calibration': {k: frozen[k] for k in ('score_mode', 'min_cosine', 'min_final', 'gamma')},
         'repeat': args.repeat,
         'metrics': {'agent_text': source_metrics},
+        'timings': timings,
         'queries': per_query,
         'counts': {'positives': len(positives), 'negatives': len(negatives), 'failures': failures},
         'gates': gates,

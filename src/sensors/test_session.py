@@ -546,3 +546,23 @@ class TestMicCommand:
             HudCommand(command_id='mic-on', session_id=session, action='set_mic', enabled=True)
         )
         assert back.state.sensor_status['mic'] == 'on'
+
+
+class TestReplayLatency:
+    def test_outcome_carries_latency_and_elapsed(self, tmp_path):
+        from src.inference.model import mock_space
+        from src.sensors.replay import ReplayHarness
+
+        manifest_path = _replay_manifest(tmp_path)
+        harness = ReplayHarness(mock_space(), manifest_path, 'mock', work_dir=str(tmp_path / 'work'))
+        try:
+            outcomes = harness.run(harness.manifest['queries'], source='agent_text', repeat=1)
+            outcome = outcomes[0]
+            # S5: dalla fine dell'input (riga originale scritta) all'evento pubblicato,
+            # debounce incluso; il timeout non usa la latency (semantica invariata)
+            assert outcome['error'] is None
+            assert 'latency_sec' in outcome and 'elapsed_sec' in outcome
+            assert outcome['latency_sec'] >= 0.9  # il debounce da 1 s è incluso
+            assert outcome['elapsed_sec'] >= outcome['latency_sec']
+        finally:
+            harness.close()

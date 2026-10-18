@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "timestamp": "2026-10-18T11:34:08.359389+00:00",
+  "timestamp": "2026-10-18T11:37:53.947558+00:00",
   "split": "test",
   "audio_policy": "S2-audio FAIL reale documentato (run-1/run-2); scope text-only per decisione utente 2026-10-18",
   "space": {
@@ -23,6 +23,53 @@
       "mrr_at_5": 1.0,
       "negative_abstention": 1.0
     }
+  },
+  "timings": {
+    "definition": "latency_sec = fine input originale -> evento pubblicato (debounce/VAD e coda inclusi, 08 §3)",
+    "samples": 39,
+    "latency_raw_sec": [
+      1.033,
+      1.034,
+      1.034,
+      1.034,
+      1.034,
+      1.035,
+      1.036,
+      1.036,
+      1.036,
+      1.036,
+      1.036,
+      1.036,
+      1.036,
+      1.036,
+      1.036,
+      1.037,
+      1.037,
+      1.037,
+      1.038,
+      1.038,
+      1.038,
+      1.039,
+      1.04,
+      1.04,
+      1.04,
+      1.042,
+      1.042,
+      1.042,
+      1.042,
+      1.042,
+      1.042,
+      1.042,
+      1.043,
+      1.043,
+      1.044,
+      1.045,
+      1.046,
+      1.047,
+      1.052
+    ],
+    "p50_sec": 1.038,
+    "p95_sec": 1.0468
   },
   "queries": [
     {
@@ -54,7 +101,7 @@
             "page_num": null,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323202.2420545
+            "created_at": 1792323427.812612
           },
           "cosine_score": 0.8438061028718948,
           "z_score": 1.3900295269131486,
@@ -79,7 +126,7 @@
             "page_num": null,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323202.2421875
+            "created_at": 1792323427.8127413
           },
           "cosine_score": 0.7708673179149628,
           "z_score": 0.622406371992178,
@@ -104,7 +151,7 @@
             "page_num": null,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323202.3465014
+            "created_at": 1792323427.917924
           },
           "cosine_score": 0.7432441413402557,
           "z_score": 0.33169423627815375,
@@ -129,7 +176,7 @@
             "page_num": null,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323202.0418637
+            "created_at": 1792323427.6343694
           },
           "cosine_score": 0.7206277847290039,
           "z_score": 0.9590695798397064,
@@ -154,7 +201,7 @@
             "page_num": null,
             "start_sec": 0.0,
             "end_sec": 45.04,
-            "created_at": 1792323206.6268802
+            "created_at": 1792323432.240909
           },
           "cosine_score": 0.7143437266349792,
           "z_score": 0.410458048184712,
@@ -195,7 +242,7 @@
             "page_num": null,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323202.2949474
+            "created_at": 1792323427.8667855
           },
           "cosine_score": 0.8230381906032562,
           "z_score": 1.8288732343034668,
@@ -220,7 +267,7 @@
             "page_num": null,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323202.0418637
+            "created_at": 1792323427.6343694
           },
           "cosine_score": 0.713140219449997,
           "z_score": 1.3492964208126068,
@@ -245,7 +292,7 @@
             "page_num": null,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323202.2950423
+            "created_at": 1792323427.8668835
           },
           "cosine_score": 0.7044746577739716,
           "z_score": 0.49279579032565396,
@@ -287,7 +334,7 @@
             "page_num": 2,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323202.459102
+            "created_at": 1792323428.0302193
           },
           "cosine_score": 0.8403037190437317,
           "z_score": 2.76078633933887,
@@ -312,7 +359,7 @@
             "page_num": null,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323202.2950423
+            "created_at": 1792323427.8668835
           },
           "cosine_score": 0.7266146838665009,
           "z_score": 1.3419574495504656,
@@ -337,7 +384,7 @@
             "page_num": null,
             "start_sec": 0.0,
             "end_sec": 45.04,
-            "created_at": 1792323206.6268802
+            "created_at": 1792323432.240909
           },
           "cosine_score": 0.7067344188690186,
           "z_score": 0.24707804123560662,
@@ -379,7 +426,7 @@
             "page_num": 3,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323202.6445696
+            "created_at": 1792323428.2050972
           },
           "cosine_score": 0.7769122272729874,
           "z_score": 2.0875367820262913,
@@ -404,7 +451,7 @@
             "page_num": 2,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323202.644156
+            "created_at": 1792323428.2046666
           },
           "cosine_score": 0.7439483404159546,
           "z_score": 1.4282590448856358,
@@ -429,7 +476,7 @@
             "page_num": null,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323202.3465014
+            "created_at": 1792323427.917924
           },
           "cosine_score": 0.718203067779541,
           "z_score": 1.1974544326464343,
@@ -469,7 +516,7 @@
             "page_num": null,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323201.5746634
+            "created_at": 1792323427.1739545
           },
           "cosine_score": 0.8345735967159271,
           "z_score": 1.72892948636188,
@@ -494,7 +541,7 @@
             "page_num": 1,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323202.6435072
+            "created_at": 1792323428.203977
           },
           "cosine_score": 0.7144818305969238,
           "z_score": 1.08095145225525,
@@ -537,7 +584,7 @@
             "page_num": null,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323202.0418637
+            "created_at": 1792323427.6343694
           },
           "cosine_score": 0.8253543823957443,
           "z_score": 1.7281623495806717,
@@ -562,7 +609,7 @@
             "page_num": null,
             "start_sec": 0.0,
             "end_sec": 45.04,
-            "created_at": 1792323206.6268802
+            "created_at": 1792323432.240909
           },
           "cosine_score": 0.7500176876783371,
           "z_score": 0.5132202804088593,
@@ -587,7 +634,7 @@
             "page_num": null,
             "start_sec": 0.0,
             "end_sec": 45.04,
-            "created_at": 1792323207.5338418
+            "created_at": 1792323433.1508403
           },
           "cosine_score": 0.7327141463756561,
           "z_score": 0.16714945435523987,
@@ -612,7 +659,7 @@
             "page_num": null,
             "start_sec": 0.0,
             "end_sec": 45.04,
-            "created_at": 1792323205.6719236
+            "created_at": 1792323431.284552
           },
           "cosine_score": 0.7289273738861084,
           "z_score": 0.09141400456428528,
@@ -637,7 +684,7 @@
             "page_num": null,
             "start_sec": 0.0,
             "end_sec": 45.0,
-            "created_at": 1792323203.5675735
+            "created_at": 1792323429.1199684
           },
           "cosine_score": 0.714975893497467,
           "z_score": -0.18761560320854187,
@@ -679,7 +726,7 @@
             "page_num": null,
             "start_sec": 40.0,
             "end_sec": 85.0,
-            "created_at": 1792323204.0505736
+            "created_at": 1792323429.6030893
           },
           "cosine_score": 0.7183979153633118,
           "z_score": 0.410516162713368,
@@ -704,7 +751,7 @@
             "page_num": null,
             "start_sec": 80.0,
             "end_sec": 95.04,
-            "created_at": 1792323204.5578542
+            "created_at": 1792323430.1177936
           },
           "cosine_score": 0.7058410048484802,
           "z_score": 0.15937795241673713,
@@ -744,7 +791,7 @@
             "page_num": null,
             "start_sec": 0.0,
             "end_sec": 45.04,
-            "created_at": 1792323205.6719236
+            "created_at": 1792323431.284552
           },
           "cosine_score": 0.7162590026855469,
           "z_score": 0.7049156228701281,
@@ -769,7 +816,7 @@
             "page_num": 2,
             "start_sec": null,
             "end_sec": null,
-            "created_at": 1792323202.459102
+            "created_at": 1792323428.0302193
           },
           "cosine_score": 0.7043122351169586,
           "z_score": 0.8072843551635733,
@@ -830,6 +877,6 @@
     "S2_audio": "FAIL reale documentato (scope text-only per decisione utente)",
     "S3": true,
     "S4_text": true,
-    "S5": "misurato nella run timing dedicata (runner/Storage, end-to-end)"
+    "S5": true
   }
 }

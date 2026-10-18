@@ -5,12 +5,15 @@ Interfaccia consumata da scripts/evaluate.py::
     ReplayHarness(space=..., manifest_path=..., backend=...).run(
         queries=lista_manifest, source='agent_text'|'mic_audio', repeat=N)
 
-Esito per query: ``{'query_id', 'relevant', 'results', 'error'}`` con results
-come dict ScoredMemory. Testo con debounce reale; WAV a blocchi 30 ms con
-pacing reale, 1 s di silenzio prima (calibrazione VAD) e 800 ms dopo (flush).
-Il fine-input è l'ultimo campione originale, escluso il padding artificiale.
-Reset fra query indipendenti; l'evento dell'ultimo segmento è l'esito. Non
-chiama ingest dal producer né replica ranking/EMA: tutto passa dal runner.
+Esito per query: ``{'query_id', 'relevant', 'results', 'error', 'latency_sec',
+'elapsed_sec'}`` con results come dict ScoredMemory. ``latency_sec`` misura da
+fine input (riga/campione originale) all'evento pubblicato, debounce incluso
+(misura S5, contratti 08 §3); il timeout NON usa la latency. Testo con
+debounce reale; WAV a blocchi 30 ms con pacing reale, 1 s di silenzio prima
+(calibrazione VAD) e 800 ms dopo (flush). Il fine-input è l'ultimo campione
+originale, escluso il padding artificiale. Reset fra query indipendenti;
+l'evento dell'ultimo segmento è l'esito. Non chiama ingest dal producer né
+replica ranking/EMA: tutto passa dal runner.
 """
 
 import argparse
@@ -35,23 +38,12 @@ FLUSH_SILENCE_SEC = 0.8
 CALIBRATION_SEC = 1.0
 
 
-class _CharTokenizer:
-    """Tokenizer deterministica a livello di carattere per il backend mock
-    (stessa fixture dei test Ingestion, piano G1: 1 char = 1 token)."""
-
-    def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
-        return [ord(ch) for ch in text]
-
-    def decode(self, ids: list[int]) -> str:
-        return ''.join(chr(int(i)) for i in ids)
-
-
 def _load_tokenizer(space: SpaceSpec):
-    if space.backend == 'mock':
-        return _CharTokenizer()
-    from transformers import AutoTokenizer  # noqa: PLC0415 — import pesante solo per il reale
+    """Loader condiviso dell'Ingestion (Agent-3): mock a caratteri, reale via
+    transformers sulla revisione dello SpaceSpec. Nessuna duplicazione locale."""
+    from src.ingestion.watcher import load_tokenizer
 
-    return AutoTokenizer.from_pretrained(space.model_id, revision=space.revision)
+    return load_tokenizer(space)
 
 
 class _Pacer:
@@ -173,13 +165,17 @@ class ReplayHarness:
                 'error': f'{type(exc).__name__}: {exc}',
             }
         elapsed = time.time() - started
+        # S5: fine input → evento pubblicato, debounce incluso; il timeout non
+        # usa la latency (semantica invariata)
+        latency_sec = max(0.0, state.emitted_at - self.last_end_of_input)
         print(
             json.dumps({
                 'query_id': query_id, 'repeat': rep, 'source': source,
                 'segments': self.last_segments,
                 'end_of_input': round(self.last_end_of_input, 3),
                 'sequence': state.sequence, 'n_results': len(state.results),
-                'elapsed_sec': round(elapsed, 3), 'timeout_sec': round(timeout, 3),
+                'latency_sec': round(latency_sec, 4),
+                'elapsed_sec': round(elapsed, 4), 'timeout_sec': round(timeout, 3),
             }, ensure_ascii=False),
             file=sys.stderr,
         )
@@ -188,6 +184,8 @@ class ReplayHarness:
             'relevant': query.get('relevant', []),
             'results': [asdict(item) for item in state.results],
             'error': None,
+            'latency_sec': round(latency_sec, 4),
+            'elapsed_sec': round(elapsed, 4),
         }
 
     def _new_session(self) -> None:
@@ -201,6 +199,8 @@ class ReplayHarness:
     def _replay_text(self, query: dict, rep: int, timeout: float):
         log = self._work / f'query-{query["id"]}-rep{rep}-agent.log'
         log.write_text(query['text'] + '\n', encoding='utf-8')
+        # fine input testuale: la riga originale è scritta per intero (S5)
+        self.last_end_of_input = time.time()
         tail = AgentLogTail(
             str(log), 'plain', start='beginning',
             session_provider=lambda: self.service.session_id,
