@@ -280,4 +280,6 @@ class Launcher:
 
 
 def sys_python() -> str:
-    return Path(sys.executable).resolve().as_posix() if hasattr(sys, 'executable') else 'python3'
+    """Interprete corrente SENZA resolve(): il symlink del venv va conservato,
+    altrimenti si bypassa pyvenv.cfg e il figlio perde i site-packages."""
+    return sys.executable if getattr(sys, 'executable', '') else 'python3'
