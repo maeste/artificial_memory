@@ -42,11 +42,11 @@ dipendenze venv e corpus fixture comunicati a ciascuno. Tag attesi:
 
 | Esecutore | Task assegnati | Stato | Evidenza / blocker |
 |---|---|---|---|
-| Agent-1-Storage | ST1–ST4 | 🟢 ST1 ✅ verificata | 14 test rieseguiti da me; CRUD pronte, ST2 (atomicità+archi) in corso |
+| Agent-1-Storage | ST1–ST4 | ✅ TASK_DONE accettato | 49 test + ruff + CLI rieseguiti da me; committato; residuo: import vettori reali dopo probe I4 |
 | Agent-2-Inference | I1–I4 (priorità client + prova reale P1) | 🟢 I1+I2 ✅ verificate | 51 test (incl. 2 real_model) rieseguiti da me; revisione HF congelata; I4 probe in corso |
-| Agent-3-Ingestion | G1–G4 | 🟢 avviato | fake locali fino a INTERFACE_READY 1/2 |
+| Agent-3-Ingestion | G1–G4 | 🟢 fake verdi (45 test verificati) | FIX richiesto: _is_timeout_error non riconosce EmbeddingError.code; poi integrazione reale; smoke fake: 477 indexed→477 unchanged (idempotenza); corpus pulito in data/watch-corpus/ |
 | Agent-4-Sensors | L1–L4 | 🟢 avviato | possibile CONTRACT_CHANGE su ReplayHarness |
-| Agent-5-HUD | H1–H4 | 🟢 H1 ✅ verificata | 30 test rieseguiti da me; H2 in corso; mpv assente (gate manuale futuro) |
+| Agent-5-HUD | H1–H4 | 🟢 H1+H2 ✅ verificate | 64 test rieseguiti da me (incl. clip video con ffmpeg reale); H3 trascrizione in corso; mpv assente (gate manuale futuro) |
 
 ## O3–O5 — Launcher, gate, verifica finale
 
@@ -64,6 +64,16 @@ corpus rigenerabili bit-exact, escluse via .gitignore, checksum nel manifest).
 
 ## Registro blocker/decisioni
 
+- 2026-10-18 **[BLOCKER] gate Fase 1 run-1 (Agent-2)**: testo 4/4, audio 2/4
+  (C1/C2 mancate; cluster vocale piatto 0.66–0.73). Diagnosi accettata: confound
+  voce-query == voce-narrazione (stesso TTS espeak-ng) → matching audio-audio
+  maschera audio→testo. **Decisione Orchestrator**: fix fixture v1.1 (query
+  `it+f4`, narrazioni `it`); 16 file corpus byte-identici (checksum 826931ee…
+  invariato), 22 WAV query rigenerati, anomalie documentate nel manifest
+  PRIMA della nuova prova; manifest run-1 conservato in
+  `docs/evaluation/manifest-run1.json`; report fallito atteso in
+  `docs/evaluation/probe-failed-run1.json`. Se l'audio resta <4/4 senza
+  confound → FAIL REALE S2-audio, evidenza conservata, decisione all'utente.
 - 2026-10-18 **SpaceSpec reale congelato**: `google/embeddinggemma-2` @ revisione
   `914f7f89142e33e77833254d9c9b90c3cef7303b`, space_id
   `a909a1662bdfb650f3db8845b3171986e1aa41b84e97984709094dc2085f7b13`,
