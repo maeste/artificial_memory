@@ -35,7 +35,7 @@ utente**; S2-audio FAIL reale documentato. Distinzioni mantenute ovunque:
 |---|---|---|
 | Agent-1-Storage | ✅ TASK_DONE ST1–ST4 + delta CLI bank | 51 test + ruff + CLI rieseguiti; import bank reale verificato |
 | Agent-2-Inference | ✅ Fase 1 chiusa + serve + fix | 58 test; probe run-1/2; serve verificato nello smoke reale |
-| Agent-3-Ingestion | 🟢 run reale VERIFICATO da me (16 file/26 memorie/gen 16/identità 914f7f8), TASK_DONE formale atteso | 57+ test verificati |
+| Agent-3-Ingestion | ✅ CHIUSO su verifica diretta Orchestrator | 57+ test, fix TIMEOUT, CLI, run reale brain-real.db (16/26/gen16/identità 914f7f8) verificati; TASK_DONE formale non pervenuto (2 solleciti), registrato |
 | Agent-4-Sensors | ✅ TASK_DONE L1–L4 + latency_sec | 95 test; harness usato da gate finale e S5 |
 | Agent-5-HUD | ✅ CHIUSO H1–H4 (fix mute incluso e verificato) | 83 test (incl. real_model) + export local senza warning; sola verifica desktop manuale pendente |
 
