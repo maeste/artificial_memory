@@ -1,0 +1,45 @@
+[project]
+name = "artificial-memory"
+version = "0.1.0"
+description = "Ambient Second Brain — prototipo locale (PoC)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+dependencies = [
+    "numpy",
+    "pyzmq",
+    "sqlite-vec",
+    "watchdog",
+    "pymupdf",
+    "pillow",
+    "sounddevice",
+    "soundfile",
+    "torch",
+    "transformers",
+    "sentence-transformers",
+    "torchcodec",
+    "PyGObject",
+    "pycairo",
+]
+
+[project.optional-dependencies]
+# Trascrizione ASR locale, richiesta solo con --transcription local (default off).
+asr = ["faster-whisper"]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "src"]
+markers = [
+    "real_model: richiede i pesi reali del modello embedding (download/HW)",
+    "desktop: richiede una sessione GNOME/Wayland attiva con display",
+    "hardware: richiede hardware fisico (microfono)",
+]
+
+[tool.ruff]
+line-length = 119
+target-version = "py312"
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]

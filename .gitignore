@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+untracked_doc
+
+# Artificial Memory — dati locali rigenerabili
+/data/
+/exports/
+tests/fixtures/ambient/
