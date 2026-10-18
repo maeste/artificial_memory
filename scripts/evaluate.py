@@ -6,6 +6,11 @@ sola split calibration con grafo vuoto; il gate finale usa la configurazione
 congelata. Il percorso di esecuzione riusa l'harness src.sensors.replay dei
 producer reali senza GTK.
 
+SCOPO (decisione utente 2026-10-18): S2-audio dichiarato FAIL reale con
+evidenza (docs/evaluation/probe-failed-run{1,2}.json). La calibrazione e il
+gate finale girano sul canale agent_text; mic_audio resta implementato ma
+fuori dal gate semantico.
+
 CLI di consegna (08 §4):
   uv run python scripts/evaluate.py --split calibration --backend real --report docs/evaluation/calibration.json
   uv run python scripts/evaluate.py --split test --backend real --report docs/evaluation/final.json
@@ -14,6 +19,7 @@ CLI di consegna (08 §4):
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -21,6 +27,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.contracts import SearchSettings, SpaceSpec  # noqa: E402
 
 SCHEMA_VERSION = 1
+AUDIO_POLICY = 'S2-audio FAIL reale documentato (run-1/run-2); scope text-only per decisione utente 2026-10-18'
+CALIBRATION_PATH = Path('data/calibration.json')
+
+# Griglia di 08 §3: per cosine min_final = min_cosine; per zscore min_final nella lista.
+GRID_MIN_COSINE = (0.20, 0.30, 0.40, 0.50, 0.60)
+GRID_MIN_FINAL_ZSCORE = (0.0, 0.5, 1.0, 1.5, 2.0, 2.5)
 
 
 def metrics(ranked_hits: list[list[bool]], negative_result_counts: list[int]) -> dict:
@@ -35,44 +47,34 @@ def metrics(ranked_hits: list[list[bool]], negative_result_counts: list[int]) ->
     }
 
 
-CALIBRATION_GRID = {
-    'cosine': [(mode, mc, mc) for mode in ('cosine',) for mc in (0.20, 0.30, 0.40, 0.50, 0.60)],
-    'zscore': [
-        (mode, mc, mf)
-        for mode in ('zscore',)
-        for mc in (0.20, 0.30, 0.40, 0.50, 0.60)
-        for mf in (0.0, 0.5, 1.0, 1.5, 2.0, 2.5)
-    ],
-}
+def apply_thresholds(results: list[dict], min_cosine: float, min_final: float) -> list[dict]:
+    """Soglie visive del contratto: (cosine >= min_cosine OR boost > 0) AND final >= min_final."""
+    kept = [
+        item for item in results
+        if (item['cosine_score'] >= min_cosine or item['synaptic_boost'] > 0)
+        and item['final_score'] >= min_final
+    ]
+    kept.sort(key=lambda item: (-item['final_score'], -item['cosine_score'], item['memory']['id']))
+    return kept[:5]
 
 
 def admissible(candidate: dict) -> bool:
-    """08 §3 punto 3: hit@5 >= .80 e astensione >= .80 sia testo sia audio."""
-    for source in ('agent_text', 'mic_audio'):
-        if candidate['metrics'][source]['hit_at_5'] < 0.80:
-            return False
-        if candidate['metrics'][source]['negative_abstention'] < 0.80:
-            return False
-    return True
+    """08 §3 punto 3 sullo scope attivo (agent_text): hit@5 e astensione >= .80."""
+    text = candidate['metrics']['agent_text']
+    return text['hit_at_5'] >= 0.80 and text['negative_abstention'] >= 0.80
 
 
 def select_calibrated(candidates: list[dict]) -> dict | None:
-    """08 §3 punto 4: max MRR medio, poi max astensione media, poi cosine, poi soglie alte."""
+    """08 §3 punto 4: max MRR, poi max astensione, poi cosine, poi soglie alte."""
     pool = [item for item in candidates if admissible(item)]
     if not pool:
         return None
 
     def key(item: dict):
-        mrr_mean = (
-            item['metrics']['agent_text']['mrr_at_5'] + item['metrics']['mic_audio']['mrr_at_5']
-        ) / 2
-        abst_mean = (
-            item['metrics']['agent_text']['negative_abstention']
-            + item['metrics']['mic_audio']['negative_abstention']
-        ) / 2
+        text = item['metrics']['agent_text']
         return (
-            mrr_mean,
-            abst_mean,
+            text['mrr_at_5'],
+            text['negative_abstention'],
             1 if item['score_mode'] == 'cosine' else 0,
             item['min_cosine'],
             item['min_final'],
@@ -81,12 +83,8 @@ def select_calibrated(candidates: list[dict]) -> dict | None:
     return max(pool, key=key)
 
 
-def search_settings_for(mode: str, min_cosine: float, min_final: float) -> SearchSettings:
-    return SearchSettings(score_mode=mode, min_cosine=min_cosine, min_final=min_final, gamma=0.6)
-
-
-def hits_for_query(results: list[dict], relevant: list[dict]) -> list[bool]:
-    """Hit per rango: PDF richiede pagina esatta, video sovrapposizione >= 50% della durata gold."""
+def hits_for_query(results: list[dict], relevant: list[dict], file_names: dict[str, str]) -> list[bool]:
+    """Hit per rango: PDF richiede pagina esatta, video sovrapposizione >= 50% del gold."""
     golds = []
     for gold in relevant:
         if 'page_num' in gold:
@@ -100,12 +98,12 @@ def hits_for_query(results: list[dict], relevant: list[dict]) -> list[bool]:
         memory = item.get('memory', item)
         hit = False
         for kind, file_id, page, g_start, g_end in golds:
-            if Path(memory['file_path']).name != _file_name(file_id):
+            if Path(memory['file_path']).name != file_names.get(file_id, file_id):
                 continue
             if kind == 'pdf' and memory.get('page_num') == page:
                 hit = True
             elif kind == 'video':
-                overlap = min(memory.get('end_sec', 0.0), g_end) - max(memory.get('start_sec', 0.0), g_start)
+                overlap = min(memory.get('end_sec') or 0.0, g_end) - max(memory.get('start_sec') or 0.0, g_start)
                 if overlap >= 0.5 * (g_end - g_start):
                     hit = True
             elif kind == 'any':
@@ -116,95 +114,190 @@ def hits_for_query(results: list[dict], relevant: list[dict]) -> list[bool]:
     return hits
 
 
-_FILE_NAME_CACHE: dict[str, str] = {}
+def _load_file_names(manifest: dict) -> dict[str, str]:
+    return {entry['id']: entry['path'] for entry in manifest['files']}
 
 
-def _file_name(file_id: str) -> str:
-    if not _FILE_NAME_CACHE:
-        manifest_path = Path(_FILE_NAME_CACHE.get('__manifest', 'tests/fixtures/ambient/manifest.json'))
-        if manifest_path.exists():
-            manifest = json.loads(manifest_path.read_text())
-            for entry in manifest['files']:
-                _FILE_NAME_CACHE[entry['id']] = entry['path']
-    return _FILE_NAME_CACHE.get(file_id, file_id)
-
-
-def build_report(
-    split: str, space: SpaceSpec, corpus_checksum: str, config: dict,
-    per_source: dict, per_query: list[dict], timings: dict,
-) -> dict:
-    gates = {
-        'S1': per_source['agent_text']['hit_at_5'] >= 0.80 and per_source['mic_audio']['hit_at_5'] >= 0.80,
-        'S2': all(per_source[s]['hit_at_5'] >= (0.875 if split == 'test' else 1.0)
-                  for s in ('agent_text', 'mic_audio')),
-        'S3': bool(per_query) and all(any(h for h in q['hits']) for q in per_query),
-        'S4': all(per_source[s]['negative_abstention'] >= 0.8 for s in ('agent_text', 'mic_audio')),
-        'S5': timings.get('p95_total_sec') is not None and timings['p95_total_sec'] <= 5.0,
-    }
+def _unfiltered_search(score_mode: str) -> dict:
+    """Impostazioni senza soglie e top_k ampio: la griglia filtra offline."""
     return {
+        'top_k': 50, 'score_mode': score_mode, 'gamma': 0.0,
+        'activation_threshold': 0.5, 'min_cosine': -1.0, 'min_final': -1e9,
+    }
+
+
+def _make_harness(args, manifest_path: Path, space: SpaceSpec, search: dict):
+    from src.sensors.replay import ReplayHarness
+
+    return ReplayHarness(
+        space=space, manifest_path=str(manifest_path), backend=args.backend,
+        config={'search': search, 'embed_timeout_ms': 30000}, device=args.device,
+    )
+
+
+def _run_source(harness, queries: list[dict], source: str) -> dict[str, list[dict]]:
+    """Outcome per query_id (repeat collassati: si usa il primo senza errore)."""
+    outcomes = harness.run(queries=queries, source=source, repeat=1)
+    by_query: dict[str, list[dict]] = {}
+    for outcome in outcomes:
+        by_query.setdefault(outcome['query_id'], []).append(outcome)
+    return by_query
+
+
+def run_calibration(args: argparse.Namespace, manifest: dict, space: SpaceSpec) -> int:
+    manifest_path = Path(args.manifest).resolve()
+    file_names = _load_file_names(manifest)
+    positives = [q for q in manifest['queries'] if q['split'] == 'calibration' and q['relevant']]
+    negatives = [q for q in manifest['queries'] if q['split'] == 'calibration' and not q['relevant']]
+    if not positives or not negatives:
+        print('ERROR: split calibration vuoto (positivi o negativi mancanti)', file=sys.stderr)
+        return 1
+    candidates = []
+    raw_by_mode: dict[str, dict[str, list[dict]]] = {}
+    for mode in ('zscore', 'cosine'):
+        harness = _make_harness(args, manifest_path, space, _unfiltered_search(mode))
+        try:
+            by_query = _run_source(harness, positives + negatives, 'agent_text')
+        finally:
+            harness.close()
+        raw_by_mode[mode] = {
+            query_id: next((o['results'] for o in items if o['error'] is None), [])
+            for query_id, items in by_query.items()
+        }
+        errors = [o['error'] for items in by_query.values() for o in items if o['error']]
+        if errors:
+            print(f'ERROR: replay {mode} con errori: {errors[:2]}', file=sys.stderr)
+            return 1
+    for mode in ('zscore', 'cosine'):
+        for min_cosine in GRID_MIN_COSINE:
+            finals = (min_cosine,) if mode == 'cosine' else GRID_MIN_FINAL_ZSCORE
+            for min_final in finals:
+                ranked_hits, negative_counts = [], []
+                for query in positives:
+                    kept = apply_thresholds(raw_by_mode[mode][query['id']], min_cosine, min_final)
+                    ranked_hits.append(hits_for_query(kept, query['relevant'], file_names))
+                for query in negatives:
+                    kept = apply_thresholds(raw_by_mode[mode][query['id']], min_cosine, min_final)
+                    negative_counts.append(len(kept))
+                candidates.append({
+                    'score_mode': mode, 'min_cosine': min_cosine, 'min_final': min_final,
+                    'metrics': {'agent_text': metrics(ranked_hits, negative_counts)},
+                })
+    chosen = select_calibrated(candidates)
+    report = {
         'schema_version': SCHEMA_VERSION,
-        'split': split,
-        'timestamp': config.get('timestamp'),
-        'space': {'model_id': space.model_id, 'revision': space.revision, 'space_id': space.space_id,
-                  'backend': space.backend},
-        'corpus_checksum': corpus_checksum,
-        'config': config,
-        'metrics': per_source,
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'split': 'calibration',
+        'audio_policy': AUDIO_POLICY,
+        'space': {'model_id': space.model_id, 'revision': space.revision,
+                  'space_id': space.space_id, 'backend': space.backend},
+        'corpus_checksum': manifest['corpus_checksum'],
+        'candidates': candidates,
+        'selected': chosen,
+        'pass': chosen is not None,
+    }
+    Path(args.report).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.report).write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding='utf-8')
+    if chosen is None:
+        print('CALIBRAZIONE FALLITA: nessun candidato ammissibile (non si abbassano i criteri)', file=sys.stderr)
+        return 1
+    calibration = {
+        'schema_version': SCHEMA_VERSION,
+        'space': {'model_id': space.model_id, 'revision': space.revision,
+                  'space_id': space.space_id, 'backend': space.backend},
+        'corpus_checksum': manifest['corpus_checksum'],
+        'score_mode': chosen['score_mode'],
+        'min_cosine': chosen['min_cosine'],
+        'min_final': chosen['min_final'],
+        'gamma': 0.6,
+        'activation_threshold': 0.5,
+        'metrics_calibration': chosen['metrics'],
+        'audio_policy': AUDIO_POLICY,
+        'timestamp': report['timestamp'],
+    }
+    CALIBRATION_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CALIBRATION_PATH.write_text(json.dumps(calibration, indent=2, ensure_ascii=False), encoding='utf-8')
+    print(json.dumps({
+        'report': args.report, 'calibration': str(CALIBRATION_PATH),
+        'selected': {k: chosen[k] for k in ('score_mode', 'min_cosine', 'min_final')},
+        'metrics': chosen['metrics'],
+    }, ensure_ascii=False))
+    return 0
+
+
+def run_test(args: argparse.Namespace, manifest: dict, space: SpaceSpec) -> int:
+    manifest_path = Path(args.manifest).resolve()
+    file_names = _load_file_names(manifest)
+    frozen = json.loads(CALIBRATION_PATH.read_text()) if Path(CALIBRATION_PATH).exists() else None
+    if frozen is None or frozen.get('corpus_checksum') != manifest['corpus_checksum']:
+        print('ERROR: data/calibration.json assente o di un corpus diverso: calibrare prima del test',
+              file=sys.stderr)
+        return 1
+    if frozen['space']['space_id'] != space.space_id:
+        print('ERROR: calibrazione di uno spazio diverso: rifiutata', file=sys.stderr)
+        return 1
+    search = {
+        'top_k': 5, 'score_mode': frozen['score_mode'], 'gamma': frozen['gamma'],
+        'activation_threshold': frozen['activation_threshold'],
+        'min_cosine': frozen['min_cosine'], 'min_final': frozen['min_final'],
+    }
+    harness = _make_harness(args, manifest_path, space, search)
+    queries = [q for q in manifest['queries'] if q['split'] == 'test']
+    try:
+        outcomes = harness.run(queries=queries, source='agent_text', repeat=args.repeat)
+    finally:
+        harness.close()
+    per_query, ranked_hits, negative_counts, failures = [], [], [], 0
+    by_query: dict[str, list[dict]] = {}
+    for outcome in outcomes:
+        by_query.setdefault(outcome['query_id'], []).append(outcome)
+    for query in queries:
+        items = by_query.get(query['id'], [])
+        good = [o for o in items if o['error'] is None]
+        if not good:
+            failures += 1
+        outcome = good[0] if good else items[0]
+        hits = hits_for_query(outcome['results'], query['relevant'], file_names)
+        per_query.append({
+            'query_id': query['id'], 'relevant': query['relevant'], 'hits': hits,
+            'results': outcome['results'], 'error': outcome['error'],
+        })
+        if query['relevant']:
+            ranked_hits.append(hits)
+        else:
+            negative_counts.append(len(outcome['results']))
+    positives = [q for q in queries if q['relevant']]
+    negatives = [q for q in queries if not q['relevant']]
+    source_metrics = metrics(ranked_hits, negative_counts)
+    hit_rate = source_metrics['hit_at_5']
+    abstention = source_metrics['negative_abstention']
+    gates = {
+        'S1_text': hit_rate >= 0.80,
+        'S2_text': len(positives) > 0 and hit_rate >= 7 / 8,
+        'S2_audio': 'FAIL reale documentato (scope text-only per decisione utente)',
+        'S3': len(positives) > 0 and all(any(h for h in q['hits']) for q in per_query if q['relevant']),
+        'S4_text': abstention >= 4 / 5,
+        'S5': 'misurato nella run timing dedicata (runner/Storage, end-to-end)',
+    }
+    report = {
+        'schema_version': SCHEMA_VERSION,
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'split': 'test',
+        'audio_policy': AUDIO_POLICY,
+        'space': {'model_id': space.model_id, 'revision': space.revision,
+                  'space_id': space.space_id, 'backend': space.backend},
+        'corpus_checksum': manifest['corpus_checksum'],
+        'calibration': {k: frozen[k] for k in ('score_mode', 'min_cosine', 'min_final', 'gamma')},
+        'repeat': args.repeat,
+        'metrics': {'agent_text': source_metrics},
         'queries': per_query,
-        'timings': timings,
+        'counts': {'positives': len(positives), 'negatives': len(negatives), 'failures': failures},
         'gates': gates,
     }
-
-
-def run_evaluation(args: argparse.Namespace) -> int:
-    manifest = json.loads(Path(args.manifest).read_text())
-    queries = [q for q in manifest['queries'] if q['split'] == args.split]
-    if not queries:
-        print(f'ERROR: split vuoto per {args.split}', file=sys.stderr)
-        return 1
-    try:
-        sys.modules.pop('src.sensors.replay', None)
-        from src.sensors.replay import ReplayHarness  # noqa: PLC0415
-    except ImportError as exc:
-        print(
-            f'BLOCKER: harness src.sensors.replay non disponibile ({exc}); '
-            'la valutazione end-to-end richiede il modulo Sensori (piano 05).',
-            file=sys.stderr,
-        )
-        return 3
-    space = SpaceSpec(**json.loads(Path(args.space_config).read_text())['space'])
-    harness = ReplayHarness(space=space, manifest_path=str(Path(args.manifest)), backend=args.backend)
-    per_source = {}
-    per_query = []
-    timings = {}
-    for source in ('agent_text', 'mic_audio'):
-        outcomes = harness.run(queries=queries, source=source, repeat=args.repeat)
-        ranked_hits = []
-        negative_counts = []
-        for outcome in outcomes:
-            hits = hits_for_query(outcome['results'], outcome['relevant'])
-            per_query.append(
-                {
-                    'query_id': outcome['query_id'], 'source': source,
-                    'relevant': outcome['relevant'], 'hits': hits,
-                    'results': outcome['results'], 'error': outcome.get('error'),
-                }
-            )
-            if outcome['relevant']:
-                ranked_hits.append(hits)
-            else:
-                negative_counts.append(len(outcome['results']))
-        per_source[source] = metrics(ranked_hits, negative_counts)
-    report = build_report(
-        split=args.split, space=space, corpus_checksum=manifest['corpus_checksum'],
-        config={'repeat': args.repeat, 'backend': args.backend, 'score': vars(args.score_settings)
-                if args.score_settings else None},
-        per_source=per_source, per_query=per_query, timings=timings,
-    )
     Path(args.report).parent.mkdir(parents=True, exist_ok=True)
-    Path(args.report).write_text(json.dumps(report, indent=2, ensure_ascii=False))
-    print(json.dumps({'report': args.report, 'metrics': per_source, 'gates': report['gates']}))
-    return 0
+    Path(args.report).write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding='utf-8')
+    print(json.dumps({'report': args.report, 'metrics': source_metrics, 'gates': gates}, ensure_ascii=False))
+    return 0 if failures == 0 else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -215,13 +308,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--space-config', default='data/probe-config.json')
     parser.add_argument('--report', required=True)
     parser.add_argument('--repeat', type=int, default=3)
-    parser.add_argument('--score-settings', default=None, help='JSON SearchSettings congelata')
+    parser.add_argument('--device', default='auto')
     args = parser.parse_args(argv)
     if args.backend != 'real':
         print('ERROR: il gate di valutazione richiede pesi reali (mock non sostituisce la prova semantica)',
               file=sys.stderr)
         return 2
-    return run_evaluation(args)
+    manifest = json.loads(Path(args.manifest).read_text())
+    space_spec = json.loads(Path(args.space_config).read_text())['space']
+    space = SpaceSpec(**space_spec)
+    if args.split == 'calibration':
+        return run_calibration(args, manifest, space)
+    return run_test(args, manifest, space)
 
 
 if __name__ == '__main__':
