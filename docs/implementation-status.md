@@ -37,7 +37,7 @@ utente**; S2-audio FAIL reale documentato. Distinzioni mantenute ovunque:
 | Agent-2-Inference | ✅ Fase 1 chiusa + serve + fix | 58 test; probe run-1/2; serve verificato nello smoke reale |
 | Agent-3-Ingestion | 🟢 run reale VERIFICATO da me (16 file/26 memorie/gen 16/identità 914f7f8), TASK_DONE formale atteso | 57+ test verificati |
 | Agent-4-Sensors | ✅ TASK_DONE L1–L4 + latency_sec | 95 test; harness usato da gate finale e S5 |
-| Agent-5-HUD | 🟢 H1+H2+H3 accettate (9 transcription + 81 ordinari verificati), TASK_DONE formale H4 atteso; fix cosmetico video muto/ASR richiesto | vedi conversazioni |
+| Agent-5-HUD | ✅ CHIUSO H1–H4 (fix mute incluso e verificato) | 83 test (incl. real_model) + export local senza warning; sola verifica desktop manuale pendente |
 
 ## Gate O4
 
