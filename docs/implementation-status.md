@@ -44,7 +44,7 @@ dipendenze venv e corpus fixture comunicati a ciascuno. Tag attesi:
 |---|---|---|---|
 | Agent-1-Storage | ST1–ST4 | ✅ TASK_DONE accettato | 49 test + ruff + CLI rieseguiti da me; committato; residuo: import vettori reali dopo probe I4 |
 | Agent-2-Inference | I1–I4 (priorità client + prova reale P1) | 🟢 I1+I2 ✅ verificate | 51 test (incl. 2 real_model) rieseguiti da me; revisione HF congelata; I4 probe in corso |
-| Agent-3-Ingestion | G1–G4 | 🟢 fake verdi (45 test verificati) | FIX richiesto: _is_timeout_error non riconosce EmbeddingError.code; poi integrazione reale; smoke fake: 477 indexed→477 unchanged (idempotenza); corpus pulito in data/watch-corpus/ |
+| Agent-3-Ingestion | G1–G4 | 🟢 57 test verificati (fix TIMEOUT + stack reale mock) | VIA al run brain-real.db trattenuto fino a fine re-probe I4 (isolamento misure) |
 | Agent-4-Sensors | L1–L4 | ✅ TASK_DONE accettato | 94 test + ruff verificati da me; committato; ReplayHarness allineata a evaluate.py; verifiche congiunte Fase 4 dopo gate reale |
 | Agent-5-HUD | H1–H4 | 🟢 H1+H2 ✅ verificate | 64 test rieseguiti da me (incl. clip video con ffmpeg reale); H3 trascrizione in corso; mpv assente (gate manuale futuro) |
 
@@ -64,6 +64,15 @@ corpus rigenerabili bit-exact, escluse via .gitignore, checksum nel manifest).
 
 ## Registro blocker/decisioni
 
+- 2026-10-18 **GATE FASE 1 PRELIMINARE: FAIL REALE su S2-audio**. Run-1 (voce
+  unica, confound TTS) e run-2 (fixture v1.1, confound rimosso) entrambi audio
+  2/4 con markdown/pdf mancanti; testo 4/4 rank 1 su tutti i formati, p95 41 ms.
+  Evidenze: `docs/evaluation/probe-failed-run1.json`, `probe-failed-run2.json`,
+  `manifest-run1.json`; test real_model del gate rosso come prova. Nessun
+  cambiamento ulteriore di fixture/query/gold/soglie/modello (D4). Decisione
+  obiettivi (text-only vs diagnostica voce reale) in escalation all'utente
+  come da PRD §11. Modello dichiarato libero: Agent-3 autorizzato al run
+  reale su brain-real.db.
 - 2026-10-18 **[BLOCKER] gate Fase 1 run-1 (Agent-2)**: testo 4/4, audio 2/4
   (C1/C2 mancate; cluster vocale piatto 0.66–0.73). Diagnosi accettata: confound
   voce-query == voce-narrazione (stesso TTS espeak-ng) → matching audio-audio
