@@ -45,7 +45,7 @@ dipendenze venv e corpus fixture comunicati a ciascuno. Tag attesi:
 | Agent-1-Storage | ST1–ST4 | ✅ TASK_DONE accettato | 49 test + ruff + CLI rieseguiti da me; committato; residuo: import vettori reali dopo probe I4 |
 | Agent-2-Inference | I1–I4 (priorità client + prova reale P1) | 🟢 I1+I2 ✅ verificate | 51 test (incl. 2 real_model) rieseguiti da me; revisione HF congelata; I4 probe in corso |
 | Agent-3-Ingestion | G1–G4 | 🟢 fake verdi (45 test verificati) | FIX richiesto: _is_timeout_error non riconosce EmbeddingError.code; poi integrazione reale; smoke fake: 477 indexed→477 unchanged (idempotenza); corpus pulito in data/watch-corpus/ |
-| Agent-4-Sensors | L1–L4 | 🟢 avviato | possibile CONTRACT_CHANGE su ReplayHarness |
+| Agent-4-Sensors | L1–L4 | ✅ TASK_DONE accettato | 94 test + ruff verificati da me; committato; ReplayHarness allineata a evaluate.py; verifiche congiunte Fase 4 dopo gate reale |
 | Agent-5-HUD | H1–H4 | 🟢 H1+H2 ✅ verificate | 64 test rieseguiti da me (incl. clip video con ffmpeg reale); H3 trascrizione in corso; mpv assente (gate manuale futuro) |
 
 ## O3–O5 — Launcher, gate, verifica finale
