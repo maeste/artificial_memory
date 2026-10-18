@@ -10,7 +10,10 @@ Proprietà esclusiva dell'esecutore storage: nessun altro modulo scrive qui.
 # suite completa (41 test: schema/CRUD, atomicità, ranking, CLI)
 uv run pytest src/storage -q
 
-# import di un manifest di record vettoriali (fixture della Fase 1 o dati mock)
+# import di un manifest di record vettoriali — due forme accettate:
+#   CLI:    {"space_spec": <asdict SpaceSpec>, "records": [{memory, embedding}, ...]}
+#   Bank:   {"schema_version": 1, "space": <asdict SpaceSpec>, "records": [...]}
+# data/vector-bank-real.json (Fase 1) è importabile così com'è
 uv run python -m src.storage import --db data/brain-mock.db --manifest manifest.json
 
 # ricerca con un vettore query JSON {"space_id": "...", "vector": [256 float]}

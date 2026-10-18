@@ -4,9 +4,11 @@ Comandi (piano ST4):
     uv run python -m src.storage import --db PATH --manifest PATH
     uv run python -m src.storage search --db PATH --query-vector PATH --top-k 5
 
-Il manifest JSON contiene `space_spec` (asdict di SpaceSpec) e `records`
-(coppie {memory: asdict(MemoryView), embedding: [...]}, come i MemoryRecord
-serializzati). La query JSON contiene `space_id` e `vector`: lo spazio viene
+Il manifest JSON è accettato in due forme esatte:
+- forma CLI: {"space_spec": <asdict SpaceSpec>, "records": [{memory, embedding}, ...]};
+- forma bank Fase 1: {"schema_version": 1, "space": <asdict SpaceSpec>, "records": [...]}
+  (data/vector-bank-real.json è importabile così com'è).
+La query JSON contiene `space_id` e `vector`: lo spazio viene
 verificato contro il DB prima di interrogare. L'import valida TUTTO il
 manifest prima di toccare il DB, poi raggruppa per file e usa replace_file
 (atomicità per file, file in ordine stabile).
@@ -20,7 +22,7 @@ import sys
 from dataclasses import asdict, fields
 from pathlib import Path
 
-from src.contracts import MemoryRecord, MemoryView, SearchSettings, SpaceSpec, validate_vector
+from src.contracts import SCHEMA_VERSION, MemoryRecord, MemoryView, SearchSettings, SpaceSpec, validate_vector
 from src.storage.db import BrainStorage
 
 
@@ -30,9 +32,20 @@ def _decode_manifest(raw: str) -> tuple[SpaceSpec, dict[str, list[MemoryRecord]]
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ValueError(f"MANIFEST_INVALIDO: JSON illeggibile: {exc}") from exc
-    if not isinstance(payload, dict) or set(payload) != {"space_spec", "records"}:
-        raise ValueError("MANIFEST_INVALIDO: attese le chiavi space_spec e records")
-    spec_raw = payload["space_spec"]
+    if not isinstance(payload, dict):
+        raise ValueError("MANIFEST_INVALIDO: radice non è un oggetto")
+    keys = set(payload)
+    if keys == {"space_spec", "records"}:
+        spec_raw = payload["space_spec"]
+    elif keys == {"schema_version", "space", "records"}:
+        # forma bank della Fase 1: stessa identità, envelope diverso
+        if payload["schema_version"] != SCHEMA_VERSION:
+            raise ValueError(
+                f"SCHEMA_VERSION_MISMATCH: bank schema {payload['schema_version']!r}, attesa {SCHEMA_VERSION}"
+            )
+        spec_raw = payload["space"]
+    else:
+        raise ValueError("MANIFEST_INVALIDO: attese le chiavi space_spec e records (o forma bank space/records)")
     if not isinstance(spec_raw, dict) or set(spec_raw) != {f.name for f in fields(SpaceSpec)}:
         raise ValueError("MANIFEST_INVALIDO: space_spec non conforme al contratto")
     spec = SpaceSpec(**spec_raw)

@@ -180,3 +180,46 @@ def test_import_rejects_mixed_source_hashes_per_file(tmp_path, capsys):
     assert main(["import", "--db", db, "--manifest", str(manifest)]) == 1
     assert "MANIFEST_INVALIDO" in capsys.readouterr().err
     assert not Path(db).exists()
+
+
+def test_import_accepts_vector_bank_format(tmp_path, capsys):
+    # forma bank della Fase 1: {"schema_version", "space", "records"}, come
+    # data/vector-bank-real.json — importabile dalla CLI senza adattamenti
+    db = str(tmp_path / "brain.db")
+    record = make_record("/tmp/a.md", "k:a1", 0.9)
+    bank = tmp_path / "bank.json"
+    bank.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "space": asdict(MOCK_SPEC),
+                "records": [{"memory": asdict(record.memory), "embedding": record.embedding}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["import", "--db", db, "--manifest", str(bank)]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["imported_memories"] == 1
+    assert summary["space_id"] == MOCK_SPEC.space_id
+
+    reopened = BrainStorage(db, MOCK_SPEC, "numpy")
+    try:
+        assert reopened.get_memory(record.memory.id) == record.memory
+    finally:
+        reopened.close()
+
+
+def test_import_rejects_wrong_bank_schema_version(tmp_path, capsys):
+    db = str(tmp_path / "brain.db")
+    bank = tmp_path / "bank.json"
+    bank.write_text(
+        json.dumps({"schema_version": 2, "space": asdict(MOCK_SPEC), "records": []}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    assert main(["import", "--db", db, "--manifest", str(bank)]) == 1
+    assert "SCHEMA_VERSION_MISMATCH" in capsys.readouterr().err
+    assert not Path(db).exists()
