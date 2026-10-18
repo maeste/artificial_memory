@@ -599,6 +599,49 @@ def probe_duration(path: Path) -> float:
     return float(result.stdout.strip())
 
 
+@pytest.fixture(scope="module")
+def sample_video_with_audio(tmp_path_factory) -> Path:
+    """MP4 di prova 2 s con traccia audio sine: serve a testare l'ordine ASR."""
+    if FFMPEG is None:
+        pytest.skip("ffmpeg non disponibile")
+    import subprocess
+
+    path = tmp_path_factory.mktemp("video-audio") / "clip-con-audio.mp4"
+    result = subprocess.run(
+        [
+            FFMPEG,
+            "-nostdin",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=64x64:d=2",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=2",
+            "-shortest",
+            "-r",
+            "10",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    return path
+
+
 class TestMediaAttachments:
     def test_verified_image_copied_with_digest(self, tmp_path, memory_factory, history_factory):
         image = tmp_path / "runtime" / "foto.png"
@@ -781,14 +824,14 @@ class SpyTranscriber:
         return self.default
 
 
-def video_pin(tmp_path, memory_factory, sample_video, input_ids):
+def video_pin(tmp_path, memory_factory, video_path, input_ids):
     memory = memory_factory(
-        file_path=str(sample_video),
+        file_path=str(video_path),
         modality="video",
         content_text="",
         start_sec=0.5,
         end_sec=1.5,
-        source_sha256=source_sha(sample_video),
+        source_sha256=source_sha(video_path),
     )
     return make_pin(memory, input_ids)
 
@@ -826,11 +869,11 @@ class TestTranscriptionOff:
 
 class TestTranscriptionLocal:
     def test_transcribes_selected_once_with_pin_priority(
-        self, tmp_path, memory_factory, history_factory, sample_video
+        self, tmp_path, memory_factory, history_factory, sample_video_with_audio
     ):
         spy = SpyTranscriber()
         cache_dir = tmp_path / "asr-cache"
-        pin = video_pin(tmp_path, memory_factory, sample_video, ["in-a"])
+        pin = video_pin(tmp_path, memory_factory, sample_video_with_audio, ["in-a"])
         settings = ExportSettings(transcription="local", asr_model_dir=str(tmp_path / "modello"))
         inputs = history_factory()
         first = do_export(
@@ -885,7 +928,7 @@ class TestTranscriptionLocal:
             assert entry["transcription"] == "trascrizione del parlato"
             assert entry["transcription_status"] == "transcribed"
 
-    def test_budget_excludes_and_declares(self, tmp_path, memory_factory, sample_video):
+    def test_budget_excludes_and_declares(self, tmp_path, memory_factory, sample_video_with_audio):
         runtime = tmp_path / "runtime"
         runtime.mkdir(parents=True, exist_ok=True)
         write_wav(runtime / "mic-a.wav", 1.0)
@@ -897,7 +940,7 @@ class TestTranscriptionLocal:
             ),
             make_input("in-m-b", source="mic_audio", occurred_at=EMITTED_AT, audio_path=str(runtime / "mic-b.wav")),
         ]
-        pin = video_pin(tmp_path, memory_factory, sample_video, ["in-a"])
+        pin = video_pin(tmp_path, memory_factory, sample_video_with_audio, ["in-a"])
         result = do_export(
             tmp_path,
             make_state(pinned=[pin]),
@@ -912,6 +955,24 @@ class TestTranscriptionLocal:
         assert not (Path(result.export_dir) / "transcripts" / "in-m-b.txt").exists()
         audio_assets = [a["path"] for a in manifest["attachments"] if a["kind"] == "mic_audio"]
         assert len(audio_assets) == 2, "l'audio escluso resta come allegato"
+
+    def test_mute_video_clip_skips_asr(self, tmp_path, memory_factory, history_factory, sample_video):
+        pin = video_pin(tmp_path, memory_factory, sample_video, ["in-a"])
+        spy = SpyTranscriber()
+        result = do_export(
+            tmp_path,
+            make_state(pinned=[pin]),
+            history_factory(),
+            settings=ExportSettings(transcription="local", asr_model_dir=str(tmp_path / "modello")),
+            transcriber_factory=lambda s: spy,
+        )
+        assert [Path(p).suffix for p in spy.calls] == [".wav", ".wav"], "clip muto: nessuna chiamata ASR"
+        manifest = read_json(result, "manifest.json")
+        statuses = {item["key"]: item["status"] for item in manifest["transcription"]["per_input"]}
+        assert statuses[pin.memory.id] == "no_audio"
+        assert not any("non riuscita" in warning for warning in manifest["warnings"])
+        entry = [item for item in manifest["pinned"] if item["memory_id"] == pin.memory.id][0]
+        assert entry["attachments"], "la clip visuale resta allegata"
 
     def test_settings_frozen_per_export(self, tmp_path, history_factory):
         captured: list = []

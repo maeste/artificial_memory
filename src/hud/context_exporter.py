@@ -519,6 +519,34 @@ def _cache_write(cache_dir: str | None, key: str, text: str) -> None:
     os.replace(tmp, directory / f"{key}.txt")
 
 
+def _has_audio_stream(path: Path) -> bool | None:
+    """True/False via ffprobe; None se non determinabile (si prova comunque l'ASR)."""
+    if path.suffix.lower() == ".wav":
+        return True
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe is None:
+        return None
+    proc = subprocess.run(
+        [
+            ffprobe,
+            "-v",
+            "error",
+            "-select_streams",
+            "a",
+            "-show_entries",
+            "stream=index",
+            "-of",
+            "csv=p=0",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return None
+    return bool(proc.stdout.strip())
+
+
 def _run_transcription(
     settings: ExportSettings,
     staging: Path,
@@ -597,6 +625,10 @@ def _run_transcription(
         }
         record["per_input"].append(entry_record)
         if not ready:
+            continue
+        # «Video senza audio resta clip visuale» (piano H2): niente ASR, nessun errore.
+        if kind == "video_clip" and _has_audio_stream(path) is False:
+            entry_record["status"] = "no_audio"
             continue
         duration = _audio_duration(path)
         entry_record["duration_sec"] = duration

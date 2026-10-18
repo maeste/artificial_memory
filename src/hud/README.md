@@ -51,7 +51,9 @@ all'avvio di ogni export e vale solo per quello successivo.
 che occorre un agente capace di ascoltare gli allegati.
 
 **local** — faster-whisper CPU int8, solo sui WAV selezionati e sull'audio
-dei video pinnati (mai tutto l'archivio). Parametri operativi deterministici
+dei video pinnati (mai tutto l'archivio). Le clip senza traccia audio non
+vengono passate all'ASR (restano clip visuali: stato `no_audio` nel
+manifest, nessun falso errore). Parametri operativi deterministici
 registrati nel manifest: `language='it'` (configurabile), `beam_size=1`,
 `temperature=0`, `condition_on_previous_text=False`. Le trascrizioni sono
 testo del modello ASR, non citazioni garantite. Budget
@@ -114,9 +116,10 @@ disabilitato fino al termine, toast con percorso, clipboard e warning.
 Il cambio selector vale per l'export successivo. Scorciatoia locale
 Ctrl+Shift+C facoltativa; nessuna hotkey globale (D14).
 
-Verifica GNOME: checklist manuale di `untracked_doc/08_EVALUATION.md`
-(avvio tardivo, pin, unpin, grafo, apertura, entrambe le modalità export)
-— richiede display attivo; non coperta dal gate headless.
+Verifica GNOME: checklist manuale in `docs/evaluation/manual.md`
+(copia operativa di `untracked_doc/08_EVALUATION.md` §6: avvio tardivo,
+pin, unpin, grafo, apertura, entrambe le modalità export) — richiede
+display attivo e resta da compilare; non coperta dal gate headless.
 
 ## Test
 
@@ -126,5 +129,5 @@ Verifica GNOME: checklist manuale di `untracked_doc/08_EVALUATION.md`
   `tests/fixtures/ambient/query-C1.wav` e `query-C2.wav` e richiede l'extra
   `asr` più il modello preparato).
 
-Verifica GNOME (H4): checklist manuale in `untracked_doc/08_EVALUATION.md`,
+Verifica GNOME (H4): checklist manuale in `docs/evaluation/manual.md`,
 da eseguire con display attivo.
