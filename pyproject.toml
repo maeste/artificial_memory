@@ -15,6 +15,7 @@ dependencies = [
     "sounddevice",
     "soundfile",
     "torch",
+    "torchvision",
     "transformers",
     "sentence-transformers",
     "torchcodec",

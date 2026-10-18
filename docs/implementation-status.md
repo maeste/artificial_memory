@@ -42,11 +42,11 @@ dipendenze venv e corpus fixture comunicati a ciascuno. Tag attesi:
 
 | Esecutore | Task assegnati | Stato | Evidenza / blocker |
 |---|---|---|---|
-| Agent-1-Storage | ST1–ST4 | 🟢 avviato | START consegnato; attesi artefatti |
-| Agent-2-Inference | I1–I4 (priorità client + prova reale P1) | 🟢 avviato | START consegnato; attesa revisione HF risolta |
+| Agent-1-Storage | ST1–ST4 | 🟢 ST1 ✅ verificata | 14 test rieseguiti da me; CRUD pronte, ST2 (atomicità+archi) in corso |
+| Agent-2-Inference | I1–I4 (priorità client + prova reale P1) | 🟢 I1+I2 ✅ verificate | 51 test (incl. 2 real_model) rieseguiti da me; revisione HF congelata; I4 probe in corso |
 | Agent-3-Ingestion | G1–G4 | 🟢 avviato | fake locali fino a INTERFACE_READY 1/2 |
 | Agent-4-Sensors | L1–L4 | 🟢 avviato | possibile CONTRACT_CHANGE su ReplayHarness |
-| Agent-5-HUD | H1–H4 | 🟢 avviato | mpv assente (gate manuale futuro) |
+| Agent-5-HUD | H1–H4 | 🟢 H1 ✅ verificata | 30 test rieseguiti da me; H2 in corso; mpv assente (gate manuale futuro) |
 
 ## O3–O5 — Launcher, gate, verifica finale
 
@@ -64,6 +64,15 @@ corpus rigenerabili bit-exact, escluse via .gitignore, checksum nel manifest).
 
 ## Registro blocker/decisioni
 
+- 2026-10-18 **SpaceSpec reale congelato**: `google/embeddinggemma-2` @ revisione
+  `914f7f89142e33e77833254d9c9b90c3cef7303b`, space_id
+  `a909a1662bdfb650f3db8845b3171986e1aa41b84e97984709094dc2085f7b13`,
+  scritto in `data/probe-config.json`. Dipendenza nuova obbligatoria `torchvision`
+  (processor video caricato a import) aggiunta a pyproject e rilockata; build
+  locked riverificata con test `real_model` (2 passed, CUDA attivo).
+- 2026-10-18 API sbloccate per Agent-3/Agent-4 dopo verifica: EmbedClient +
+  SemanticHashMock (I1/I2), BrainStorage CRUD (ST1); replace_file in arrivo con
+  ST2, hybrid_search con ST3.
 - 2026-10-18 Orchestrator: nessun blocker tecnico O1. Revisione reale del modello
   (commit HF di `google/embeddinggemma-2`) da risolvere con Agent-2 prima del
   congelamento SpaceSpec; l'identità dello spazio resta fissata all'avvio.
