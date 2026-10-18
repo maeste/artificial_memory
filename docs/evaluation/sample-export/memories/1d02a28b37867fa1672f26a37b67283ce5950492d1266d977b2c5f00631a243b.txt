@@ -1,0 +1,1 @@
+La cache conserva i risultati delle interrogazioni per sessanta secondi dalla lettura. Ogni scrittura sul database invalida subito le chiavi coinvolte, così la lettura successiva ricalcola il valore aggiornato.

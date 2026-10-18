@@ -1,0 +1,186 @@
+{
+  "schema_version": 1,
+  "export_id": "5e8c9720be1a4549998645813042c1d7",
+  "session_id": "demo-791bae7d",
+  "space_id": "a909a1662bdfb650f3db8845b3171986e1aa41b84e97984709094dc2085f7b13",
+  "backend": "real",
+  "space_spec": null,
+  "search_settings": null,
+  "export_settings": {
+    "transcription": "off",
+    "asr_model_dir": null,
+    "language": "it",
+    "context_max_chars": 24000,
+    "max_transcribe_sec": 300.0
+  },
+  "created_at": 1792324615.036184,
+  "snapshot": {
+    "event_id": "demo-event",
+    "sequence": 1,
+    "emitted_at": 1792300049.0,
+    "reason": "pin"
+  },
+  "inputs": [
+    {
+      "id": "in-1",
+      "source": "agent_text",
+      "occurred_at": 1792300000.0,
+      "duration_sec": null,
+      "text": "Stiamo ragionando sulla cache del servizio.",
+      "audio_path": null,
+      "transcription": null,
+      "transcription_status": null
+    },
+    {
+      "id": "in-2",
+      "source": "agent_text",
+      "occurred_at": 1792300020.0,
+      "duration_sec": null,
+      "text": "Quanto durano i risultati e quando li invalidiamo?",
+      "audio_path": null,
+      "transcription": null,
+      "transcription_status": null
+    },
+    {
+      "id": "in-3",
+      "source": "mic_audio",
+      "occurred_at": 1792300040.0,
+      "duration_sec": 4.0,
+      "text": "",
+      "audio_path": "assets/101b9192057c4439b88b958e2c486d07.wav",
+      "transcription": null,
+      "transcription_status": null
+    }
+  ],
+  "pinned": [
+    {
+      "memory_id": "1d02a28b37867fa1672f26a37b67283ce5950492d1266d977b2c5f00631a243b",
+      "title": "f01.md > Cache",
+      "source_path": "/home/maeste/project/artificial_memory/data/watch-corpus/f01.md",
+      "source_sha256": "80ca6d86455fa237ce3076d9d6119c01fde5be4459426a8d70edcd5dd8fc44c6",
+      "modality": "markdown",
+      "page_num": null,
+      "start_sec": null,
+      "end_sec": null,
+      "pinned_at": 1792300046.0,
+      "snapshot_id": "snap-demo",
+      "snapshot_input_ids": [
+        "in-1",
+        "in-2",
+        "in-3"
+      ],
+      "text_file": "memories/1d02a28b37867fa1672f26a37b67283ce5950492d1266d977b2c5f00631a243b.txt",
+      "source_state": "verified",
+      "attachments": []
+    },
+    {
+      "memory_id": "e1933a4e64ede4a23583e1ad33f99a0e33afa7715020bbf84712eb2cf3c47363",
+      "title": "f09.png > immagine",
+      "source_path": "/home/maeste/project/artificial_memory/data/watch-corpus/f09.png",
+      "source_sha256": "ef531559ad8be4de3673b78bd5cb11a2e413073ecb966c05d9adaebc674dc608",
+      "modality": "image",
+      "page_num": null,
+      "start_sec": null,
+      "end_sec": null,
+      "pinned_at": 1792300047.0,
+      "snapshot_id": "snap-demo",
+      "snapshot_input_ids": [
+        "in-1",
+        "in-2",
+        "in-3"
+      ],
+      "text_file": "memories/e1933a4e64ede4a23583e1ad33f99a0e33afa7715020bbf84712eb2cf3c47363.txt",
+      "source_state": "verified",
+      "attachments": [
+        {
+          "path": "assets/cb6cc1199e7547339cfb12fb768692fe.png",
+          "sha256": "ef531559ad8be4de3673b78bd5cb11a2e413073ecb966c05d9adaebc674dc608",
+          "kind": "image",
+          "source_path": "/home/maeste/project/artificial_memory/data/watch-corpus/f09.png"
+        }
+      ]
+    },
+    {
+      "memory_id": "512f7b125c98b80be1c79c4220f8060d64d38d24c98fdc7f731d7458c27b2894",
+      "title": "f13.mp4 > [40.0s, 85.0s)",
+      "source_path": "/home/maeste/project/artificial_memory/data/watch-corpus/f13.mp4",
+      "source_sha256": "3081b1b3d6d17d37ff705b804aa7d6fd2e5feb689041f2734ba1cbfa9d2e7bf2",
+      "modality": "video",
+      "page_num": null,
+      "start_sec": 40.0,
+      "end_sec": 85.0,
+      "pinned_at": 1792300048.0,
+      "snapshot_id": "snap-demo",
+      "snapshot_input_ids": [
+        "in-1",
+        "in-2",
+        "in-3"
+      ],
+      "text_file": "memories/512f7b125c98b80be1c79c4220f8060d64d38d24c98fdc7f731d7458c27b2894.txt",
+      "source_state": "verified",
+      "attachments": [
+        {
+          "path": "assets/5710512f1b88494db3e96e1918b0b34d.mp4",
+          "sha256": "a31386d641b7dfb73f7500ab656005de5761e4bd1c56a0344ed4de3e0a7da7a6",
+          "kind": "video_clip",
+          "source_path": "/home/maeste/project/artificial_memory/data/watch-corpus/f13.mp4"
+        }
+      ]
+    }
+  ],
+  "memory_map": {
+    "1d02a28b37867fa1672f26a37b67283ce5950492d1266d977b2c5f00631a243b": [
+      "memories/1d02a28b37867fa1672f26a37b67283ce5950492d1266d977b2c5f00631a243b.txt"
+    ],
+    "e1933a4e64ede4a23583e1ad33f99a0e33afa7715020bbf84712eb2cf3c47363": [
+      "memories/e1933a4e64ede4a23583e1ad33f99a0e33afa7715020bbf84712eb2cf3c47363.txt",
+      "assets/cb6cc1199e7547339cfb12fb768692fe.png"
+    ],
+    "512f7b125c98b80be1c79c4220f8060d64d38d24c98fdc7f731d7458c27b2894": [
+      "memories/512f7b125c98b80be1c79c4220f8060d64d38d24c98fdc7f731d7458c27b2894.txt",
+      "assets/5710512f1b88494db3e96e1918b0b34d.mp4"
+    ]
+  },
+  "attachments": [
+    {
+      "path": "assets/101b9192057c4439b88b958e2c486d07.wav",
+      "sha256": "b6db19a6e0b70b5753f2075f20e7268234be22b23a80492a13ada6b5820b9531",
+      "kind": "mic_audio",
+      "source_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/query-T1.wav"
+    },
+    {
+      "path": "assets/cb6cc1199e7547339cfb12fb768692fe.png",
+      "sha256": "ef531559ad8be4de3673b78bd5cb11a2e413073ecb966c05d9adaebc674dc608",
+      "kind": "image",
+      "source_path": "/home/maeste/project/artificial_memory/data/watch-corpus/f09.png"
+    },
+    {
+      "path": "assets/5710512f1b88494db3e96e1918b0b34d.mp4",
+      "sha256": "a31386d641b7dfb73f7500ab656005de5761e4bd1c56a0344ed4de3e0a7da7a6",
+      "kind": "video_clip",
+      "source_path": "/home/maeste/project/artificial_memory/data/watch-corpus/f13.mp4"
+    }
+  ],
+  "transcription": {
+    "mode": "off",
+    "language": "it",
+    "params": {
+      "beam_size": 1,
+      "temperature": 0.0,
+      "condition_on_previous_text": false
+    },
+    "budget_sec": 300.0,
+    "used_sec": 0.0,
+    "model": null,
+    "repo": null,
+    "revision": null,
+    "per_input": [],
+    "excluded_ids": []
+  },
+  "clipboard_status": "copied",
+  "warnings": [],
+  "omissions": [],
+  "operational_limits": [
+    "PoC: le copie di staging richiedono spazio disco pari alle sorgenti selezionate."
+  ]
+}

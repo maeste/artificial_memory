@@ -1,0 +1,39 @@
+{
+  "session_id": "demo-791bae7d",
+  "snapshot": {
+    "id": "demo-event",
+    "emitted_at": 1792300049.0
+  },
+  "inputs": [
+    {
+      "id": "in-1",
+      "source": "agent_text",
+      "occurred_at": 1792300000.0,
+      "duration_sec": null,
+      "text": "Stiamo ragionando sulla cache del servizio.",
+      "audio_path": null,
+      "transcription": null,
+      "transcription_status": null
+    },
+    {
+      "id": "in-2",
+      "source": "agent_text",
+      "occurred_at": 1792300020.0,
+      "duration_sec": null,
+      "text": "Quanto durano i risultati e quando li invalidiamo?",
+      "audio_path": null,
+      "transcription": null,
+      "transcription_status": null
+    },
+    {
+      "id": "in-3",
+      "source": "mic_audio",
+      "occurred_at": 1792300040.0,
+      "duration_sec": 4.0,
+      "text": "",
+      "audio_path": "assets/101b9192057c4439b88b958e2c486d07.wav",
+      "transcription": null,
+      "transcription_status": null
+    }
+  ]
+}
