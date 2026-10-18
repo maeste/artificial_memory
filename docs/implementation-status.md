@@ -42,7 +42,7 @@ dipendenze venv e corpus fixture comunicati a ciascuno. Tag attesi:
 
 | Esecutore | Task assegnati | Stato | Evidenza / blocker |
 |---|---|---|---|
-| Agent-1-Storage | ST1–ST4 | ✅ TASK_DONE accettato | 49 test + ruff + CLI rieseguiti da me; committato; residuo: import vettori reali dopo probe I4 |
+| Agent-1-Storage | ST1–ST4 | ✅ CHIUSO (nessun residuo) | import dimostrativo bank reale: 26 record/16 file, generation 16, cos 1.0, mismatch rifiutato — su DB usa-e-getta |
 | Agent-2-Inference | I1–I4 (priorità client + prova reale P1) | 🟢 I1+I2 ✅ verificate | 51 test (incl. 2 real_model) rieseguiti da me; revisione HF congelata; I4 probe in corso |
 | Agent-3-Ingestion | G1–G4 | 🟢 57 test verificati (fix TIMEOUT + stack reale mock) | VIA al run brain-real.db trattenuto fino a fine re-probe I4 (isolamento misure) |
 | Agent-4-Sensors | L1–L4 | ✅ TASK_DONE accettato | 94 test + ruff verificati da me; committato; ReplayHarness allineata a evaluate.py; verifiche congiunte Fase 4 dopo gate reale |
