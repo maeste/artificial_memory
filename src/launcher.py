@@ -78,7 +78,7 @@ class Launcher:
     def _default_children(self) -> dict[str, list[str]]:
         config = ['--config', self.config_path]
         children = {
-            'inference': [self.python_exe, '-m', 'src.inference.server'] + config,
+            'inference': [self.python_exe, '-m', 'src.inference', 'serve'] + config,
             'watcher': [self.python_exe, '-m', 'src.ingestion.watcher'] + config,
             'runner': [self.python_exe, '-m', 'src.sensors.runner'] + config,
             'hud': [self.python_exe, '-m', 'src.hud.app'] + config,
