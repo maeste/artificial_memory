@@ -56,7 +56,7 @@ dipendenze venv e corpus fixture comunicati a ciascuno. Tag attesi:
 | O3 CLI `run_poc.py` | ✅ | flag richiesti (watch-dir/backend/agent-log/agent-format/no-mic/device/db/show-all/headless/calibration/transcription/asr-model-dir); revisione reale richiesta o da data/probe-config.json |
 | O3 CLI `python -m src.control` | ✅ | snapshot/pin/unpin/new-session/mic on\|off con retry stesso command_id |
 | O3 quickstart | ⏳ | scritto alla consegna con i comandi verificati end-to-end |
-| O4 gate incrementali | non avviato | dipende dagli artefatti degli esecutori |
+| O4 gate incrementali | 🟢 avanzato | Fase 1: testo PASS / audio FAIL documentato (run-1+2). Calibrazione: prima esecuzione SENZA candidati ammissibili (griglia normativa); griglia cosine estesa a 0.70 (direzione più severa, criteri invariati, correzione da sola calibrazione come da 08 §3) → congelata cosine/0.70/0.70, hit 4/4, astensione 4/5. **Gate finale text: 8/8 hit tutti rank 1 (S1/S2/S3 PASS), astensione 5/5 (S4 PASS)**, zero errori. S5: attesa misura dedicata end-to-end. |
 | O5 verifica finale | non avviato | — |
 
 Commit checkpoint: `b8aeb95` (solo file di pertinenza Orchestrator; fixture
