@@ -1,0 +1,815 @@
+"""Runner dei sensori — fusione, sessione, comandi e lifecycle (piano 05, contratti §5/§6).
+
+Il runner è il proprietario dello stato: due EMA, last_seen, storia di sessione,
+pin, contatori. I producer (testo/microfono) accodano input; un worker unico
+esegue inferenza, ricerca e comandi, così nessuna connessione/socket è toccata
+da due thread. Il thread controllo possiede il REP ma non lo stato.
+"""
+
+import argparse
+import json
+import os
+import shutil
+import sys
+import time
+import uuid
+from collections import OrderedDict
+from collections.abc import Callable
+from dataclasses import replace
+
+from src.config import (
+    DEFAULT_ALPHA,
+    DEFAULT_MAX_PINS,
+    DEFAULT_SESSION_AUDIO_MAX_BYTES,
+    DEFAULT_SESSION_LIMIT_SEC,
+    DEFAULT_SESSION_MAX_INPUTS,
+    DEFAULT_SOURCE_TTL_SEC,
+)
+from src.contracts import (
+    MAX_LATEST_INPUTS,
+    MAX_SNAPSHOT_INPUT_IDS,
+    SOURCE_VALUES,
+    ContextSnapshot,
+    ControlResponse,
+    EmbedRequest,
+    HudCommand,
+    LiveInput,
+    LiveStateEvent,
+    PinnedMemory,
+    RuntimePaths,
+    ScoredMemory,
+    SearchSettings,
+    SpaceSpec,
+    decode_hud_command,
+    pack,
+)
+from src.sensors.ema_tracker import EMATracker
+
+SOURCE_ORDER = ('agent_text', 'mic_audio')
+CANDIDATE_MULTIPLIER = 4  # candidati richiesti a Storage per sorgente (piano L1)
+MAX_COMMAND_CACHE = 256
+DEBUG_SHOW_ALL = 'DEBUG'
+LEASE_SEC = 120.0  # finestra concessa all'HUD dopo new_session (contratti §6)
+
+# Ordine canonico delle sorgenti nei pareggi di fusione (contratti §5).
+
+
+def combine_results(
+    results_by_source: dict[str, list[ScoredMemory]],
+    settings: SearchSettings,
+    *,
+    show_all: bool = False,
+) -> list[ScoredMemory]:
+    """Fusione deterministica fra sorgenti (piano L1, contratti §5).
+
+    Unione per memory ID con i punteggi della sorgente vincente (parità:
+    agent_text prima di mic_audio); matched_sources raccoglie tutte le sorgenti
+    che hanno restituito il candidato. Le soglie visive si applicano DOPO
+    l'unione, ai punteggi della sorgente vincente; ordine final/coseno/ID e
+    limite top_k. ``show_all`` salta le soglie ed è marcato DEBUG dall'HUD.
+    """
+    best: dict[str, tuple[ScoredMemory, str]] = {}
+    matched: dict[str, list[str]] = {}
+    for source in SOURCE_ORDER:
+        for candidate in results_by_source.get(source, ()):
+            key = candidate.memory.id
+            sources = matched.setdefault(key, [])
+            if source not in sources:
+                sources.append(source)
+            current = best.get(key)
+            if current is None or candidate.cosine_score > current[0].cosine_score:
+                best[key] = (candidate, source)
+    merged = [
+        replace(candidate, matched_sources=matched[key], winning_source=source)
+        for key, (candidate, source) in best.items()
+    ]
+    if not show_all:
+        merged = [
+            item
+            for item in merged
+            if (item.cosine_score >= settings.min_cosine or item.synaptic_boost > 0)
+            and item.final_score >= settings.min_final
+        ]
+    merged.sort(key=lambda item: (-item.final_score, -item.cosine_score, item.memory.id))
+    return merged[: settings.top_k]
+
+
+class RunnerService:
+    """Stato live di sessione: input, EMA, retrieval, pin e comandi (§4/§6).
+
+    Classe testabile senza hardware: clock e dipendenze sono iniettabili. Un
+    solo thread alla volta tocca i metodi pubblici (il worker del server).
+    """
+
+    def __init__(
+        self,
+        storage,
+        embed_client,
+        paths,
+        settings: SearchSettings,
+        *,
+        space: SpaceSpec | None = None,
+        clock=None,
+        alpha: float = DEFAULT_ALPHA,
+        source_ttl_sec: float = DEFAULT_SOURCE_TTL_SEC,
+        max_pins: int = DEFAULT_MAX_PINS,
+        session_limit_sec: float = DEFAULT_SESSION_LIMIT_SEC,
+        session_max_inputs: int = DEFAULT_SESSION_MAX_INPUTS,
+        session_audio_max_bytes: int = DEFAULT_SESSION_AUDIO_MAX_BYTES,
+        audio_root: str | None = None,
+        show_all: bool = False,
+    ):
+        self.storage = storage
+        self.embed_client = embed_client
+        self.paths = paths
+        self.settings = settings
+        resolved = space if space is not None else getattr(storage, 'space', None)
+        if resolved is None:
+            raise ValueError(
+                'INVALID_REQUEST: SpaceSpec non disponibile: passare space= al RunnerService'
+            )
+        self.space = resolved
+        self.space_id = resolved.space_id
+        self._clock = clock if clock is not None else time.time
+        self.alpha = alpha
+        self.source_ttl_sec = source_ttl_sec
+        self.max_pins = max_pins
+        self.session_limit_sec = session_limit_sec
+        self.session_max_inputs = session_max_inputs
+        self.session_audio_max_bytes = session_audio_max_bytes
+        self.audio_root = audio_root or paths.run_dir
+        self.show_all = show_all
+
+        self.session_id = uuid.uuid4().hex
+        self._trackers: dict[str, EMATracker] = {s: EMATracker(alpha=alpha) for s in SOURCE_ORDER}
+        self._last_seen: dict[str, float] = {}
+        self._history: list[LiveInput] = []
+        self._pinned: list[PinnedMemory] = []
+        self._sequence = 0
+        self._sensor_status: dict[str, str] = {}
+        self._dropped_inputs = 0
+        self._mic_enabled = True
+        self._session_suspended = False
+        self._audio_bytes = 0
+        self._started_at = self._clock()
+        self._command_cache: OrderedDict[str, ControlResponse] = OrderedDict()
+        self._lease_expires_at: float | None = None
+        self._pending_cleanup: list[tuple[str, float]] = []
+
+    # ------------------------------------------------------------------ input
+
+    def ingest(self, item: LiveInput) -> LiveStateEvent:
+        """Accetta un input live: storia, inferenza, EMA e retrieval (§4)."""
+        self._validate_input(item)
+        if item.session_id != self.session_id:
+            raise ValueError(f'STALE_SESSION: input di sessione {item.session_id[:8]}…')
+        if self._session_full(item):
+            self._session_suspended = True
+            raise ValueError('SESSION_FULL: limiti di sessione raggiunti, input sospesi')
+        # La storia registra l'input PRIMA dell'inferenza: resta esportabile
+        # anche se il modello fallisce (piano L1).
+        self._history.append(item)
+        self._register_audio(item)
+        vector = self._embed(item)
+        if vector is not None:
+            try:
+                self._trackers[item.source].update(vector)
+            except ValueError as exc:
+                self._sensor_status[f'{item.source}_error'] = str(exc)
+            else:
+                self._last_seen[item.source] = self._now()
+                self._sensor_status.pop(f'{item.source}_error', None)
+        # Embedding fallito: EMA/last_seen/ranking intatti, solo diagnostica.
+        return self._build_event('input')
+
+    def status_event(self, reason: str = 'status') -> LiveStateEvent:
+        """Heartbeat: TTL ricalcolato senza bisogno di un nuovo input (piano L1).
+
+        ``reason='index'`` è la variante per un nuovo commit dell'indice: la
+        ricerca viene ricalcolata senza alterare le EMA (contratti §6).
+        """
+        self._sweep_expired_cleanup()
+        return self._build_event(reason)
+
+    # ------------------------------------------------------------------ comandi
+
+    def handle(self, cmd: HudCommand) -> ControlResponse:
+        """Gestione idempotente: lo stesso command_id usa la risposta memorizzata (§6)."""
+        cached = self._command_cache.get(cmd.command_id)
+        if cached is not None:
+            return cached
+        response = self._dispatch(cmd)
+        self._remember_response(cmd.command_id, response)
+        return response
+
+    def _dispatch(self, cmd: HudCommand) -> ControlResponse:
+        if cmd.action == 'snapshot' and cmd.session_id is None:
+            return self._snapshot_response(cmd)  # discovery: unica azione con session_id None
+        if cmd.session_id != self.session_id:
+            return self._error_response(cmd, 'STALE_SESSION', f'sessione non corrente: {cmd.session_id}')
+        if cmd.action == 'snapshot':
+            return self._snapshot_response(cmd)
+        if cmd.action == 'pin':
+            return self._pin(cmd)
+        if cmd.action == 'unpin':
+            return self._unpin(cmd)
+        if cmd.action == 'new_session':
+            return self._new_session(cmd)
+        if cmd.action == 'set_mic':
+            return self._set_mic(cmd)
+        return self._error_response(cmd, 'INVALID_REQUEST', f'azione non gestita: {cmd.action}')
+
+    def _error_response(self, cmd: HudCommand, code: str, message: str) -> ControlResponse:
+        return ControlResponse(command_id=cmd.command_id, success=False, state=None,
+                               error_code=code, error=message)
+
+    def _snapshot_response(self, cmd: HudCommand) -> ControlResponse:
+        self._sweep_expired_cleanup()
+        state = self._build_event('status')
+        return ControlResponse(
+            command_id=cmd.command_id,
+            success=True,
+            state=state,
+            session_inputs=list(self._history),
+            lease_expires_at=self._active_lease(),
+        )
+
+    def _pin(self, cmd: HudCommand) -> ControlResponse:
+        now = self._now()
+        memory = self.storage.get_memory(cmd.memory_id)
+        if memory is None:
+            return self._error_response(cmd, 'MEMORY_NOT_FOUND', f'memoria assente: {cmd.memory_id}')
+        existing = [p for p in self._pinned if p.memory.id == cmd.memory_id]
+        if existing:
+            if self.storage.get_memory(existing[0].memory.id) is not None:
+                # Doppio pin: idempotente, nessun nuovo rinforzo (contratti §5).
+                return ControlResponse(command_id=cmd.command_id, success=True,
+                                       state=self._build_event('pin'))
+            self._pinned = [p for p in self._pinned if p.memory.id != cmd.memory_id]
+        survivors = [
+            p for p in self._pinned if self.storage.get_memory(p.memory.id) is not None
+        ]
+        if len(survivors) >= self.max_pins:
+            return self._error_response(cmd, 'PIN_LIMIT', f'massimo {self.max_pins} pin attivi')
+        others = [p.memory.id for p in survivors]
+        try:
+            if others:
+                self.storage.reinforce_synapses(cmd.memory_id, others)
+        except Exception as exc:  # noqa: BLE001 — il DB può fallire: il pin non viene aggiunto
+            return self._error_response(cmd, 'STORAGE_ERROR', f'rinforzo fallito: {exc}')
+        snapshot = ContextSnapshot(
+            id=uuid.uuid4().hex,
+            session_id=self.session_id,
+            captured_at=now,
+            input_ids=[item.id for item in self._history[-MAX_SNAPSHOT_INPUT_IDS:]],
+        )
+        self._pinned.append(PinnedMemory(memory=memory, pinned_at=now, snapshot=snapshot))
+        return ControlResponse(command_id=cmd.command_id, success=True,
+                               state=self._build_event('pin'))
+
+    def _unpin(self, cmd: HudCommand) -> ControlResponse:
+        # Nessuna chiamata a Storage: gli archi appresi restano (contratti §5).
+        self._pinned = [p for p in self._pinned if p.memory.id != cmd.memory_id]
+        return ControlResponse(command_id=cmd.command_id, success=True,
+                               state=self._build_event('unpin'))
+
+    def _new_session(self, cmd: HudCommand) -> ControlResponse:
+        now = self._now()
+        old_audio_dir = self._audio_dir()
+        if os.path.isdir(old_audio_dir):
+            # Il reset rinvia la rimozione della vecchia directory audio alla
+            # scadenza del lease (contratti §6).
+            self._pending_cleanup.append((old_audio_dir, now + LEASE_SEC))
+        self._lease_expires_at = now + LEASE_SEC
+        self.session_id = uuid.uuid4().hex
+        self._trackers = {s: EMATracker(alpha=self.alpha) for s in SOURCE_ORDER}
+        self._last_seen.clear()
+        self._history.clear()
+        self._pinned.clear()
+        self._sensor_status.clear()
+        self._session_suspended = False
+        self._audio_bytes = 0
+        self._started_at = now
+        # sequence resta crescente per tutta l'esecuzione, incluso reset (§6).
+        return ControlResponse(command_id=cmd.command_id, success=True,
+                               state=self._build_event('reset'),
+                               lease_expires_at=self._lease_expires_at)
+
+    def _set_mic(self, cmd: HudCommand) -> ControlResponse:
+        self._mic_enabled = bool(cmd.enabled)
+        return ControlResponse(command_id=cmd.command_id, success=True,
+                               state=self._build_event('status'))
+
+    # ------------------------------------------------------------------ interno
+
+    def _now(self) -> float:
+        return self._clock()
+
+    def _validate_input(self, item: LiveInput) -> None:
+        if item.source not in SOURCE_VALUES:
+            raise ValueError(f'INVALID_REQUEST: sorgente non ammessa: {item.source!r}')
+        if not item.session_id:
+            raise ValueError('INVALID_REQUEST: session_id vuoto')
+        if item.source == 'agent_text' and not item.text:
+            raise ValueError('INVALID_REQUEST: input agent_text senza testo')
+        if item.source == 'mic_audio':
+            if not item.audio_path:
+                raise ValueError('INVALID_REQUEST: input mic_audio senza audio_path')
+            if not os.path.isabs(item.audio_path):
+                raise ValueError(f'INVALID_REQUEST: audio_path relativo: {item.audio_path}')
+
+    def _session_full(self, item: LiveInput) -> bool:
+        now = self._now()
+        if now - self._started_at > self.session_limit_sec:
+            return True
+        if len(self._history) >= self.session_max_inputs:
+            return True
+        incoming = self._audio_size(item)
+        return self._audio_bytes + incoming > self.session_audio_max_bytes
+
+    def _register_audio(self, item: LiveInput) -> None:
+        if item.source == 'mic_audio':
+            self._audio_bytes += self._audio_size(item)
+
+    @staticmethod
+    def _audio_size(item: LiveInput) -> int:
+        if item.source != 'mic_audio' or not item.audio_path:
+            return 0
+        try:
+            return os.path.getsize(item.audio_path)
+        except OSError:
+            return int((item.duration_sec or 0.0) * 32000)  # PCM 16 kHz mono int16
+
+    def _embed(self, item: LiveInput) -> list[float] | None:
+        request = EmbedRequest(
+            request_id=uuid.uuid4().hex,
+            is_query=True,
+            text_payload=item.text if item.source == 'agent_text' else '',
+            audio_path=item.audio_path if item.source == 'mic_audio' else None,
+        )
+        try:
+            return self.embed_client.embed(request)
+        except Exception as exc:  # noqa: BLE001 — ogni fallimento inferenza è diagnostica
+            code = getattr(exc, 'code', None) or str(exc) or type(exc).__name__
+            self._sensor_status[f'{item.source}_error'] = code
+            return None
+
+    def _active_sources(self, now: float) -> list[str]:
+        return [
+            source
+            for source in SOURCE_ORDER
+            if source in self._last_seen and now - self._last_seen[source] <= self.source_ttl_sec
+        ]
+
+    def _retrieval(self, now: float) -> list[ScoredMemory]:
+        active = self._active_sources(now)
+        if not active:
+            return []
+        results_by_source: dict[str, list[ScoredMemory]] = {}
+        for source in active:
+            query = self._trackers[source].state
+            if query is None:
+                continue
+            try:
+                results_by_source[source] = self.storage.hybrid_search(
+                    query, replace(self.settings, top_k=self.settings.top_k * CANDIDATE_MULTIPLIER)
+                )
+            except Exception as exc:  # noqa: BLE001 — la ricerca può fallire per sorgente
+                self._sensor_status['search_error'] = str(exc) or type(exc).__name__
+        return combine_results(results_by_source, self.settings, show_all=self.show_all)
+
+    def _build_event(self, reason: str) -> LiveStateEvent:
+        now = self._now()
+        self._sequence += 1
+        status = dict(self._sensor_status)
+        status['mic'] = 'on' if self._mic_enabled else 'off'
+        if self.show_all:
+            status['show_all'] = DEBUG_SHOW_ALL
+        if self._session_suspended:
+            status['session'] = 'full'
+        return LiveStateEvent(
+            event_id=uuid.uuid4().hex,
+            sequence=self._sequence,
+            session_id=self.session_id,
+            space_id=self.space_id,
+            backend=self.space.backend,
+            emitted_at=now,
+            reason=reason,  # type: ignore[argtype]
+            latest_inputs=list(self._history[-MAX_LATEST_INPUTS:]),
+            results=self._retrieval(now),
+            pinned=list(self._pinned),
+            sensor_status=status,
+            source_last_seen=dict(self._last_seen),
+            dropped_inputs=self._dropped_inputs,
+        )
+
+    def _remember_response(self, command_id: str, response: ControlResponse) -> None:
+        self._command_cache[command_id] = response
+        self._command_cache.move_to_end(command_id)
+        while len(self._command_cache) > MAX_COMMAND_CACHE:
+            self._command_cache.popitem(last=False)
+
+    def _active_lease(self) -> float | None:
+        if self._lease_expires_at is not None and self._now() >= self._lease_expires_at:
+            return None
+        return self._lease_expires_at
+
+    def _sweep_expired_cleanup(self) -> None:
+        now = self._now()
+        remaining = []
+        for path, expires_at in self._pending_cleanup:
+            if now >= expires_at:
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                remaining.append((path, expires_at))
+        self._pending_cleanup = remaining
+        if self._lease_expires_at is not None and now >= self._lease_expires_at:
+            self._lease_expires_at = None
+
+    def _audio_dir(self) -> str:
+        return os.path.join(self.audio_root, self.session_id)
+
+    # ------------------------------------------------------------------ per il server
+
+    def note_dropped_input(self) -> None:
+        """Il worker registra lo scarto per coda piena (contratti §6)."""
+        self._dropped_inputs += 1
+
+    @property
+    def mic_enabled(self) -> bool:
+        return self._mic_enabled
+
+    @property
+    def session_suspended(self) -> bool:
+        return self._session_suspended
+
+
+class LiveInputQueue:
+    """Coda live limitata fra producer e worker (contratti §6).
+
+    Massimo ``maxsize`` input (8 nel PoC); quando piena scarta l'input
+    pendente più vecchio, incrementa il contatore e delega la pulizia del
+    suo WAV al callback (il file non è referenziato: non è mai entrato in
+    storia). L'ordine FIFO si conserva.
+    """
+
+    def __init__(self, maxsize: int = 8):
+        if maxsize < 1:
+            raise ValueError(f'INVALID_REQUEST: maxsize non valido: {maxsize}')
+        self._maxsize = maxsize
+        self._items: list[LiveInput] = []
+        self.dropped = 0
+
+    def put(self, item: LiveInput, on_drop: Callable[[LiveInput], None] | None = None) -> bool:
+        """Accoda un input; False se la pressione ha scartato il più vecchio."""
+        dropped = None
+        if len(self._items) >= self._maxsize:
+            dropped = self._items.pop(0)
+            self.dropped += 1
+        self._items.append(item)
+        if dropped is not None:
+            if on_drop is not None:
+                on_drop(dropped)
+            else:
+                _delete_unreferenced_wav(dropped)
+            return False
+        return True
+
+    def drain(self) -> list[LiveInput]:
+        """Svuota la coda in ordine FIFO (il worker la consuma a lotto)."""
+        items, self._items = self._items, []
+        return items
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+
+def _delete_unreferenced_wav(item: LiveInput) -> None:
+    """Elimina il WAV di un input scartato: non referenziato da storia o pin."""
+    if item.source == 'mic_audio' and item.audio_path:
+        try:
+            os.unlink(item.audio_path)
+        except OSError:
+            pass
+
+
+class RunnerServer:
+    """Collega RunnerService ai socket: PUB eventi, REP controllo, coda input.
+
+    Il thread controllo possiede il REP ma non lo stato: inoltra i comandi
+    alla coda e attende la risposta. Il worker unico possiede client
+    inferenza, storage e stato; i comandi hanno priorità sui nuovi input fra
+    un'inferenza e l'altra (contratti §6). Ogni pubblicazione è uno snapshot
+    completo; heartbeat e index_generation ogni ``heartbeat_sec`` best effort.
+    """
+
+    def __init__(
+        self,
+        service: RunnerService,
+        context=None,
+        *,
+        heartbeat_sec: float = 2.0,
+        command_timeout_sec: float = 2.0,
+        max_queue: int = 8,
+    ):
+        import queue as queue_mod
+        import threading
+
+        import zmq
+
+        self._queue_mod = queue_mod
+        self._threading = threading
+        self._zmq = zmq
+        self.service = service
+        self.queue = LiveInputQueue(maxsize=max_queue)
+        self.heartbeat_sec = heartbeat_sec
+        self.command_timeout_sec = command_timeout_sec
+        self._command_queue: 'queue_mod.Queue' = queue_mod.Queue()
+        self._stop = threading.Event()
+        self._last_heartbeat = 0.0
+        self._last_generation: int | None = None
+        self.last_event: LiveStateEvent | None = None
+        self._worker: threading.Thread | None = None
+        self._control: threading.Thread | None = None
+
+    # ------------------------------------------------------------------ API
+
+    def start(self) -> None:
+        self._stop.clear()
+        self._worker = self._threading.Thread(target=self._worker_loop, name='sensors-worker', daemon=True)
+        self._control = self._threading.Thread(target=self._control_loop, name='sensors-control', daemon=True)
+        self._worker.start()
+        self._control.start()
+
+    def close(self) -> None:
+        self._stop.set()
+        for thread in (self._worker, self._control):
+            if thread is not None:
+                thread.join(timeout=3)
+        self._worker = None
+        self._control = None
+
+    def submit_async(self, cmd: HudCommand) -> dict:
+        """Accoda un comando; il worker riempe 'response' e alza 'done'."""
+        slot = {'done': self._threading.Event(), 'response': None}
+        self._command_queue.put((cmd, slot))
+        return slot
+
+    def submit_command(self, cmd: HudCommand) -> ControlResponse:
+        """Invia un comando e attende; al timeout risponde TIMEOUT senza invalidare."""
+        slot = self.submit_async(cmd)
+        if not slot['done'].wait(self.command_timeout_sec):
+            return ControlResponse(
+                command_id=cmd.command_id, success=False, state=None,
+                error_code='TIMEOUT', error='worker non ha risposto in tempo',
+            )
+        return slot['response']
+
+    def step(self) -> bool:
+        """Un giro del worker: prima i comandi, poi gli input. Ritorna True se attivo."""
+        worked = False
+        while True:
+            try:
+                cmd, slot = self._command_queue.get_nowait()
+            except self._queue_mod.Empty:
+                break
+            slot['response'] = self._execute(cmd)
+            slot['done'].set()
+            worked = True
+        for item in self.queue.drain():
+            try:
+                event = self.service.ingest(item)
+            except ValueError as exc:
+                self._log_rejection(item, exc)
+                continue
+            self.last_event = event
+            self._publish(event)
+            worked = True
+        return worked
+
+    # ------------------------------------------------------------------ thread
+
+    def _worker_loop(self) -> None:
+        import time as time_mod
+
+        pub = self._zmq.Context.instance().socket(self._zmq.PUB)
+        pub.setsockopt(self._zmq.LINGER, 0)
+        pub.bind(self.service.paths.events_endpoint)
+        self._pub = pub
+        try:
+            while not self._stop.is_set():
+                worked = self.step()
+                now = time_mod.time()
+                if now - self._last_heartbeat >= self.heartbeat_sec:
+                    self._last_heartbeat = now
+                    self._heartbeat()
+                if not worked:
+                    self._stop.wait(0.02)
+        finally:
+            pub.close(0)
+
+    def _heartbeat(self) -> None:
+        reason = 'status'
+        try:
+            generation = self.service.storage.index_generation()
+            if self._last_generation is not None and generation != self._last_generation:
+                reason = 'index'
+            self._last_generation = generation
+        except Exception:  # noqa: BLE001 — lettura best effort fra richieste
+            pass
+        event = self.service.status_event(reason=reason)
+        self.last_event = event
+        self._publish(event)
+
+    def _control_loop(self) -> None:
+        rep = self._zmq.Context.instance().socket(self._zmq.REP)
+        rep.setsockopt(self._zmq.LINGER, 0)
+        rep.setsockopt(self._zmq.RCVTIMEO, 100)
+        rep.bind(self.service.paths.control_endpoint)
+        try:
+            while not self._stop.is_set():
+                try:
+                    raw = rep.recv_string()
+                except self._zmq.Again:
+                    continue
+                response = self._serve(raw)
+                rep.send_string(pack('control.response', response))
+        finally:
+            rep.close(0)
+
+    def _serve(self, raw: str) -> ControlResponse:
+        try:
+            command = decode_hud_command(raw)
+        except ValueError as exc:
+            return ControlResponse(
+                command_id=_extract_command_id(raw), success=False, state=None,
+                error_code='INVALID_REQUEST', error=str(exc),
+            )
+        return self.submit_command(command)
+
+    def _execute(self, cmd: HudCommand) -> ControlResponse:
+        try:
+            return self.service.handle(cmd)
+        except Exception as exc:  # noqa: BLE001 — il REP non deve restare a metà ciclo
+            return ControlResponse(
+                command_id=cmd.command_id, success=False, state=None,
+                error_code='INVALID_REQUEST', error=str(exc),
+            )
+
+    def _publish(self, event: LiveStateEvent) -> None:
+        pub = getattr(self, '_pub', None)
+        if pub is None:
+            return  # step() diretto nei test senza socket
+        try:
+            pub.send_string(pack('live.state', event))
+        except self._zmq.ZMQError:
+            pass  # l'HUD recupera via controllo (contratti §6)
+
+    def _log_rejection(self, item: LiveInput, exc: ValueError) -> None:
+        print(f'sensors: input scartato ({exc}): {item.id}', file=sys.stderr)
+
+
+def _extract_command_id(raw: str) -> str:
+    try:
+        value = json.loads(raw)
+        command_id = value.get('payload', {}).get('command_id')
+    except Exception:  # noqa: BLE001 — payload illeggibile
+        command_id = None
+    return command_id if isinstance(command_id, str) and command_id else 'unknown'
+
+
+# --------------------------------------------------------------------------- CLI
+
+
+def load_config(path: str | None) -> dict:
+    """Legge il config JSON condiviso (SpaceSpec, RuntimePaths, SearchSettings, knob)."""
+    if path is None:
+        return {}
+    import pathlib
+
+    return json.loads(pathlib.Path(path).read_text(encoding='utf-8'))
+
+
+def build_runtime(config: dict) -> tuple[SpaceSpec, RuntimePaths, SearchSettings]:
+    """Risolve space/paths/search dal config: chiavi assenti → default mock locale."""
+    from src.config import MOCK_REVISION, default_data_layout, default_space, make_runtime_paths, new_run_id
+
+    space_cfg = config.get('space')
+    space = SpaceSpec(**space_cfg) if space_cfg else default_space('mock', MOCK_REVISION)
+    paths_cfg = config.get('paths')
+    if paths_cfg:
+        paths = RuntimePaths(**paths_cfg)
+    else:
+        db_real, db_mock, export_dir = default_data_layout('.')
+        db_path = db_mock if space.backend == 'mock' else db_real
+        paths = make_runtime_paths(
+            new_run_id(), db_path, config.get('watch_dir') or os.path.abspath('./watch_dir'), export_dir
+        )
+    search = SearchSettings(**(config.get('search') or {}))
+    return space, paths, search
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Runner standalone:   python -m src.sensors.runner --config PATH ..."""
+    import signal
+    import threading
+
+    parser = argparse.ArgumentParser(description='Runner live dei sensori (Agent-4)')
+    parser.add_argument('--config', default=None, help='config JSON condiviso (launcher/bootstrap)')
+    parser.add_argument('--agent-log', default=None, help='path esplicito del log agente')
+    parser.add_argument('--agent-format', choices=('plain', 'claude-jsonl'), default='plain')
+    parser.add_argument('--no-mic', action='store_true', help='disattiva la cattura microfono')
+    parser.add_argument('--show-all', action='store_true', help='salta le soglie visive (DEBUG)')
+    parser.add_argument(
+        '--replay-log', action='store_true',
+        help='diagnostica: il log agente è una fixture e va letto dall\'inizio',
+    )
+    args = parser.parse_args(argv)
+    config = load_config(args.config)
+    space, paths, search = build_runtime(config)
+
+    from src.inference.client import EmbedClient
+    from src.storage.db import BrainStorage
+
+    storage = BrainStorage(paths.db_path, space)
+    client = EmbedClient(paths.embed_endpoint, space.space_id,
+                         timeout_ms=int(config.get('embed_timeout_ms', 30000)))
+    service = RunnerService(
+        storage, client, paths, search, space=space,
+        alpha=float(config.get('alpha', DEFAULT_ALPHA)),
+        source_ttl_sec=float(config.get('source_ttl_sec', DEFAULT_SOURCE_TTL_SEC)),
+        max_pins=int(config.get('max_pins', DEFAULT_MAX_PINS)),
+        session_limit_sec=float(config.get('session_limit_sec', DEFAULT_SESSION_LIMIT_SEC)),
+        session_max_inputs=int(config.get('session_max_inputs', DEFAULT_SESSION_MAX_INPUTS)),
+        session_audio_max_bytes=int(config.get('session_audio_max_bytes', DEFAULT_SESSION_AUDIO_MAX_BYTES)),
+        show_all=args.show_all,
+    )
+    server = RunnerServer(service, command_timeout_sec=config.get('command_timeout_ms', 2000) / 1000)
+    server.start()
+
+    def enqueue(item: LiveInput) -> None:
+        def on_drop(dropped: LiveInput) -> None:
+            service.note_dropped_input()
+            _delete_unreferenced_wav(dropped)
+
+        server.queue.put(item, on_drop=on_drop)
+
+    tail = None
+    if args.agent_log:
+        from src.sensors.agent_sensor import AgentLogTail
+
+        tail = AgentLogTail(
+            args.agent_log, args.agent_format,
+            session_provider=lambda: service.session_id,
+            start='beginning' if args.replay_log else 'end',
+        )
+        print(f'runner: tail su {args.agent_log} ({args.agent_format})', file=sys.stderr)
+
+    mic = None
+    capture = None
+
+    def on_audio_block(block) -> None:
+        if service.mic_enabled and not service.session_suspended:
+            for item in mic.feed_block(block):
+                enqueue(item)
+        else:
+            for item in mic.flush():  # pausa: flush controllato, il testo resta attivo
+                enqueue(item)
+
+    if not args.no_mic:
+        from src.sensors.mic_sensor import AudioCapture, MicSensor
+
+        mic = MicSensor(audio_root=paths.run_dir, session_provider=lambda: service.session_id)
+        capture = AudioCapture(on_audio_block)
+
+        def run_capture() -> None:
+            try:
+                capture.start()  # blocca nel thread dedicato finché non si ferma
+            except Exception as exc:  # noqa: BLE001 — niente fallback finto: errore chiaro
+                print(f'runner: microfono non disponibile ({exc}); solo sorgente testuale', file=sys.stderr)
+
+        threading.Thread(target=run_capture, name='mic-capture', daemon=True).start()
+
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    print(f'runner: sessione {service.session_id[:8]}… eventi su {paths.events_endpoint}', file=sys.stderr)
+    try:
+        while True:
+            time.sleep(0.05)
+            if tail is not None:
+                item = tail.poll()
+                if item is not None:
+                    enqueue(item)
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
+        print(f'runner: arresto; diagnostica tail: {tail.diagnostics if tail else "n/d"}', file=sys.stderr)
+        server.close()
+        if capture is not None:
+            capture.stop()
+        client.close()
+        storage.close()
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
