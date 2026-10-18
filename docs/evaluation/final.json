@@ -1,0 +1,835 @@
+{
+  "schema_version": 1,
+  "timestamp": "2026-10-18T11:34:08.359389+00:00",
+  "split": "test",
+  "audio_policy": "S2-audio FAIL reale documentato (run-1/run-2); scope text-only per decisione utente 2026-10-18",
+  "space": {
+    "model_id": "google/embeddinggemma-2",
+    "revision": "914f7f89142e33e77833254d9c9b90c3cef7303b",
+    "space_id": "a909a1662bdfb650f3db8845b3171986e1aa41b84e97984709094dc2085f7b13",
+    "backend": "real"
+  },
+  "corpus_checksum": "826931eec822747ec13f9fac1480a86c8bc1be0c06832f100cefb125e3c600c5",
+  "calibration": {
+    "score_mode": "cosine",
+    "min_cosine": 0.7,
+    "min_final": 0.7,
+    "gamma": 0.6
+  },
+  "repeat": 3,
+  "metrics": {
+    "agent_text": {
+      "hit_at_5": 1.0,
+      "mrr_at_5": 1.0,
+      "negative_abstention": 1.0
+    }
+  },
+  "queries": [
+    {
+      "query_id": "T1",
+      "relevant": [
+        {
+          "file_id": "M1"
+        }
+      ],
+      "hits": [
+        true,
+        true,
+        false,
+        false,
+        false
+      ],
+      "results": [
+        {
+          "memory": {
+            "id": "34bbaa4ea77b9d8beb700d7f240d148f1f937d96bd71edb022b621eafce3b847",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f01.md",
+            "modality": "markdown",
+            "chunk_key": "section:Cache:0:part:0",
+            "content_sha256": "e50f28aa941344f7d0a43af7aa023e6685dd7a4a65c9212cdc97c968da825928",
+            "source_sha256": "80ca6d86455fa237ce3076d9d6119c01fde5be4459426a8d70edcd5dd8fc44c6",
+            "context_header": "f01.md > Cache",
+            "snippet_text": "La cache conserva i risultati delle interrogazioni per sessanta secondi dalla lettura. Ogni scrittura sul database invalida subito le chiavi coinvolte, così la lettura successiva ricalcola il valore aggiornato.",
+            "content_text": "La cache conserva i risultati delle interrogazioni per sessanta secondi dalla lettura. Ogni scrittura sul database invalida subito le chiavi coinvolte, così la lettura successiva ricalcola il valore aggiornato.",
+            "page_num": null,
+            "start_sec": null,
+            "end_sec": null,
+            "created_at": 1792323202.2420545
+          },
+          "cosine_score": 0.8438061028718948,
+          "z_score": 1.3900295269131486,
+          "synaptic_boost": 0.0,
+          "final_score": 0.8438061028718948,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        },
+        {
+          "memory": {
+            "id": "b4a211be1df8a9ae53dfd057fc36d5dda0c141e4a3530d453d541cc8224ac947",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f01.md",
+            "modality": "markdown",
+            "chunk_key": "section:Note operative:0:part:0",
+            "content_sha256": "20c0c11ceea9fb1977fb056d6b5be093093d96f5ddb8940623d8decb309c4152",
+            "source_sha256": "80ca6d86455fa237ce3076d9d6119c01fde5be4459426a8d70edcd5dd8fc44c6",
+            "context_header": "f01.md > Note operative",
+            "snippet_text": "Lo strato di cache è trasparente per il chiamante e non modifica la semantica delle risposte.",
+            "content_text": "Lo strato di cache è trasparente per il chiamante e non modifica la semantica delle risposte.",
+            "page_num": null,
+            "start_sec": null,
+            "end_sec": null,
+            "created_at": 1792323202.2421875
+          },
+          "cosine_score": 0.7708673179149628,
+          "z_score": 0.622406371992178,
+          "synaptic_boost": 0.0,
+          "final_score": 0.7708673179149628,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        },
+        {
+          "memory": {
+            "id": "42368de4d19b3ce0a854098814b33f58084e156c0d2fe91cda2df2fac3de0874",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f03.md",
+            "modality": "markdown",
+            "chunk_key": "section:Autenticazione:0:part:0",
+            "content_sha256": "6f83a10ad54e98cb4e7eafddd2ff33dfe2c76ac87276b729e005259aa938b9ff",
+            "source_sha256": "4d508c2f41fcfb7c7352eb204e0b306e05abb32188725cc3b55e75b0b1280297",
+            "context_header": "f03.md > Autenticazione",
+            "snippet_text": "L’access token scade dopo quindici minuti dalla emissione. Il client rinnova la sessione tramite il refresh token, che resta valido per giorni e può essere revocato.",
+            "content_text": "L’access token scade dopo quindici minuti dalla emissione. Il client rinnova la sessione tramite il refresh token, che resta valido per giorni e può essere revocato.",
+            "page_num": null,
+            "start_sec": null,
+            "end_sec": null,
+            "created_at": 1792323202.3465014
+          },
+          "cosine_score": 0.7432441413402557,
+          "z_score": 0.33169423627815375,
+          "synaptic_boost": 0.0,
+          "final_score": 0.7432441413402557,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        },
+        {
+          "memory": {
+            "id": "2da34c28f0cfab127fd83399712e7f0f010d643bf152c0b9deb52591aa60b9ba",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f10.jpg",
+            "modality": "image",
+            "chunk_key": "image:0",
+            "content_sha256": "c9581614dc731d5b2fc28ff6de201030fa39c3d98dfc3b0ca105d33ebf707744",
+            "source_sha256": "78c4d6b2caa3601d5518f7788bcc53c821512477875721fd380840b9befc8bee",
+            "context_header": "f10.jpg > immagine",
+            "snippet_text": "Immagine 1200x800",
+            "content_text": "",
+            "page_num": null,
+            "start_sec": null,
+            "end_sec": null,
+            "created_at": 1792323202.0418637
+          },
+          "cosine_score": 0.7206277847290039,
+          "z_score": 0.9590695798397064,
+          "synaptic_boost": 0.0,
+          "final_score": 0.7206277847290039,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        },
+        {
+          "memory": {
+            "id": "570dc0352a2aefe8cc9fe547755ae0fcc5a1b0b0d25d97a5a7f4ff54dc35b546",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f15.mp4",
+            "modality": "video",
+            "chunk_key": "video:0:45040",
+            "content_sha256": "1a3ff3611109aa061786730a4f880ae21e3d9d83c67386ce6ca325c4623d0655",
+            "source_sha256": "fcf929f17ea48fc88dd4dc92f0bbd721dd01f6fca7f2c76cb4923d81be3b35a1",
+            "context_header": "f15.mp4 > [0.0s, 45.0s)",
+            "snippet_text": "Video 45 s, finestra [0, 45)",
+            "content_text": "",
+            "page_num": null,
+            "start_sec": 0.0,
+            "end_sec": 45.04,
+            "created_at": 1792323206.6268802
+          },
+          "cosine_score": 0.7143437266349792,
+          "z_score": 0.410458048184712,
+          "synaptic_boost": 0.0,
+          "final_score": 0.7143437266349792,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        }
+      ],
+      "error": null
+    },
+    {
+      "query_id": "T2",
+      "relevant": [
+        {
+          "file_id": "M2"
+        }
+      ],
+      "hits": [
+        true,
+        false,
+        true
+      ],
+      "results": [
+        {
+          "memory": {
+            "id": "2d5bdbaea7e6b37648b515849a140eadbb589c68f88df643699c63f95fa4dd18",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f02.md",
+            "modality": "markdown",
+            "chunk_key": "section:Backup:0:part:0",
+            "content_sha256": "37004e8eb8db065e02ebc4234dc9f19bc82d6289d138b001e7a7a04c1e041a12",
+            "source_sha256": "cae15bd6f3c333166efd265a0f48029f9e2036bc332cad9e54dc9f4a7281dc0b",
+            "context_header": "f02.md > Backup",
+            "snippet_text": "La copia di backup viene eseguita ogni giorno alle due di notte. Con questa cadenza la perdita massima di dati accettata in caso di guasto è di ventiquattro ore di scritture.",
+            "content_text": "La copia di backup viene eseguita ogni giorno alle due di notte. Con questa cadenza la perdita massima di dati accettata in caso di guasto è di ventiquattro ore di scritture.",
+            "page_num": null,
+            "start_sec": null,
+            "end_sec": null,
+            "created_at": 1792323202.2949474
+          },
+          "cosine_score": 0.8230381906032562,
+          "z_score": 1.8288732343034668,
+          "synaptic_boost": 0.0,
+          "final_score": 0.8230381906032562,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        },
+        {
+          "memory": {
+            "id": "2da34c28f0cfab127fd83399712e7f0f010d643bf152c0b9deb52591aa60b9ba",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f10.jpg",
+            "modality": "image",
+            "chunk_key": "image:0",
+            "content_sha256": "c9581614dc731d5b2fc28ff6de201030fa39c3d98dfc3b0ca105d33ebf707744",
+            "source_sha256": "78c4d6b2caa3601d5518f7788bcc53c821512477875721fd380840b9befc8bee",
+            "context_header": "f10.jpg > immagine",
+            "snippet_text": "Immagine 1200x800",
+            "content_text": "",
+            "page_num": null,
+            "start_sec": null,
+            "end_sec": null,
+            "created_at": 1792323202.0418637
+          },
+          "cosine_score": 0.713140219449997,
+          "z_score": 1.3492964208126068,
+          "synaptic_boost": 0.0,
+          "final_score": 0.713140219449997,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        },
+        {
+          "memory": {
+            "id": "26af91cb86929bb3ca41cd7c375d1bbfa0440bf6d91a3b45942eddf0662cee85",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f02.md",
+            "modality": "markdown",
+            "chunk_key": "section:Verifiche:0:part:0",
+            "content_sha256": "c96448cc3cc1a3597e10dc0ea753918f37e28f1e8dcfcfda1dd14202251f980b",
+            "source_sha256": "cae15bd6f3c333166efd265a0f48029f9e2036bc332cad9e54dc9f4a7281dc0b",
+            "context_header": "f02.md > Verifiche",
+            "snippet_text": "Il ripristino viene provato monthly su ambiente separato.",
+            "content_text": "Il ripristino viene provato monthly su ambiente separato.",
+            "page_num": null,
+            "start_sec": null,
+            "end_sec": null,
+            "created_at": 1792323202.2950423
+          },
+          "cosine_score": 0.7044746577739716,
+          "z_score": 0.49279579032565396,
+          "synaptic_boost": 0.0,
+          "final_score": 0.7044746577739716,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        }
+      ],
+      "error": null
+    },
+    {
+      "query_id": "T3",
+      "relevant": [
+        {
+          "file_id": "P1",
+          "page_num": 2
+        }
+      ],
+      "hits": [
+        true,
+        false,
+        false
+      ],
+      "results": [
+        {
+          "memory": {
+            "id": "17805a6eff78f46951bc245e70dd974939d90f71fb91ee16c79cc11cfc682b7f",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f05.pdf",
+            "modality": "pdf",
+            "chunk_key": "page:2:part:0",
+            "content_sha256": "3cf25c1813910e03bdc6f617406ad64eed82799d8d6df28468e496a285382593",
+            "source_sha256": "20efc145d1975430680d462f8347dc6cd80707a1e82cdf0f4ef3a3364feed0c9",
+            "context_header": "f05.pdf [Pag. 2]",
+            "snippet_text": "Rilascio progressivoIl rollout canary avvia al cinque per cento del traffico complessivo. Gli errori vengono monitorati in tempo reale: il rilascio si interrompe conrollback automatico quando la percentuale di errori supera il due per cento.",
+            "content_text": "Rilascio progressivoIl rollout canary avvia al cinque per cento del traffico complessivo. Gli errori vengono monitorati in tempo reale: il rilascio si interrompe conrollback automatico quando la percentuale di errori supera il due per cento.",
+            "page_num": 2,
+            "start_sec": null,
+            "end_sec": null,
+            "created_at": 1792323202.459102
+          },
+          "cosine_score": 0.8403037190437317,
+          "z_score": 2.76078633933887,
+          "synaptic_boost": 0.0,
+          "final_score": 0.8403037190437317,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        },
+        {
+          "memory": {
+            "id": "26af91cb86929bb3ca41cd7c375d1bbfa0440bf6d91a3b45942eddf0662cee85",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f02.md",
+            "modality": "markdown",
+            "chunk_key": "section:Verifiche:0:part:0",
+            "content_sha256": "c96448cc3cc1a3597e10dc0ea753918f37e28f1e8dcfcfda1dd14202251f980b",
+            "source_sha256": "cae15bd6f3c333166efd265a0f48029f9e2036bc332cad9e54dc9f4a7281dc0b",
+            "context_header": "f02.md > Verifiche",
+            "snippet_text": "Il ripristino viene provato monthly su ambiente separato.",
+            "content_text": "Il ripristino viene provato monthly su ambiente separato.",
+            "page_num": null,
+            "start_sec": null,
+            "end_sec": null,
+            "created_at": 1792323202.2950423
+          },
+          "cosine_score": 0.7266146838665009,
+          "z_score": 1.3419574495504656,
+          "synaptic_boost": 0.0,
+          "final_score": 0.7266146838665009,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        },
+        {
+          "memory": {
+            "id": "570dc0352a2aefe8cc9fe547755ae0fcc5a1b0b0d25d97a5a7f4ff54dc35b546",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f15.mp4",
+            "modality": "video",
+            "chunk_key": "video:0:45040",
+            "content_sha256": "1a3ff3611109aa061786730a4f880ae21e3d9d83c67386ce6ca325c4623d0655",
+            "source_sha256": "fcf929f17ea48fc88dd4dc92f0bbd721dd01f6fca7f2c76cb4923d81be3b35a1",
+            "context_header": "f15.mp4 > [0.0s, 45.0s)",
+            "snippet_text": "Video 45 s, finestra [0, 45)",
+            "content_text": "",
+            "page_num": null,
+            "start_sec": 0.0,
+            "end_sec": 45.04,
+            "created_at": 1792323206.6268802
+          },
+          "cosine_score": 0.7067344188690186,
+          "z_score": 0.24707804123560662,
+          "synaptic_boost": 0.0,
+          "final_score": 0.7067344188690186,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        }
+      ],
+      "error": null
+    },
+    {
+      "query_id": "T4",
+      "relevant": [
+        {
+          "file_id": "P2",
+          "page_num": 3
+        }
+      ],
+      "hits": [
+        true,
+        false,
+        false
+      ],
+      "results": [
+        {
+          "memory": {
+            "id": "b6e07b7120c17c01a5b11265fc0acc5afa41b9d8a6e190cc65f99583cd3cd4e7",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f06.pdf",
+            "modality": "pdf",
+            "chunk_key": "page:3:part:0",
+            "content_sha256": "225551ea9d65cf047e50d4b3b860dfaeb685eaeed7fe825532d1fdaa3524c542",
+            "source_sha256": "9e9c6966e0c785eeedd833a148685599e19ed4ca70690c01ff753f7f836d31ea",
+            "context_header": "f06.pdf [Pag. 3]",
+            "snippet_text": "Schema outboxIl record outbox viene salvato nella stessa transazione del database e pubblicato solo dopo il commit, così un messaggio non viene maiemesso per una scrittura annullata.",
+            "content_text": "Schema outboxIl record outbox viene salvato nella stessa transazione del database e pubblicato solo dopo il commit, così un messaggio non viene maiemesso per una scrittura annullata.",
+            "page_num": 3,
+            "start_sec": null,
+            "end_sec": null,
+            "created_at": 1792323202.6445696
+          },
+          "cosine_score": 0.7769122272729874,
+          "z_score": 2.0875367820262913,
+          "synaptic_boost": 0.0,
+          "final_score": 0.7769122272729874,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        },
+        {
+          "memory": {
+            "id": "be89b6d7e69be3f3ffa98f38aab5d2e31090fa2b9444650225a4f610c7d6d0be",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f06.pdf",
+            "modality": "pdf",
+            "chunk_key": "page:2:part:0",
+            "content_sha256": "26dc3dcdbac9d614e21d0134c195f20e8da30f314b7896a40166af5bb70a3c88",
+            "source_sha256": "9e9c6966e0c785eeedd833a148685599e19ed4ca70690c01ff753f7f836d31ea",
+            "context_header": "f06.pdf [Pag. 2]",
+            "snippet_text": "GlossarioCanale: coda di pubblicazione dei messaggi. Idempotenza: proprietà di elaborazione senza duplicati.",
+            "content_text": "GlossarioCanale: coda di pubblicazione dei messaggi. Idempotenza: proprietà di elaborazione senza duplicati.",
+            "page_num": 2,
+            "start_sec": null,
+            "end_sec": null,
+            "created_at": 1792323202.644156
+          },
+          "cosine_score": 0.7439483404159546,
+          "z_score": 1.4282590448856358,
+          "synaptic_boost": 0.0,
+          "final_score": 0.7439483404159546,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        },
+        {
+          "memory": {
+            "id": "42368de4d19b3ce0a854098814b33f58084e156c0d2fe91cda2df2fac3de0874",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f03.md",
+            "modality": "markdown",
+            "chunk_key": "section:Autenticazione:0:part:0",
+            "content_sha256": "6f83a10ad54e98cb4e7eafddd2ff33dfe2c76ac87276b729e005259aa938b9ff",
+            "source_sha256": "4d508c2f41fcfb7c7352eb204e0b306e05abb32188725cc3b55e75b0b1280297",
+            "context_header": "f03.md > Autenticazione",
+            "snippet_text": "L’access token scade dopo quindici minuti dalla emissione. Il client rinnova la sessione tramite il refresh token, che resta valido per giorni e può essere revocato.",
+            "content_text": "L’access token scade dopo quindici minuti dalla emissione. Il client rinnova la sessione tramite il refresh token, che resta valido per giorni e può essere revocato.",
+            "page_num": null,
+            "start_sec": null,
+            "end_sec": null,
+            "created_at": 1792323202.3465014
+          },
+          "cosine_score": 0.718203067779541,
+          "z_score": 1.1974544326464343,
+          "synaptic_boost": 0.0,
+          "final_score": 0.718203067779541,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        }
+      ],
+      "error": null
+    },
+    {
+      "query_id": "T5",
+      "relevant": [
+        {
+          "file_id": "I1"
+        }
+      ],
+      "hits": [
+        true,
+        false
+      ],
+      "results": [
+        {
+          "memory": {
+            "id": "d2703374284476dd031ad14df96769b20d74bedd14e7ef0e737e80997112e003",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f09.png",
+            "modality": "image",
+            "chunk_key": "image:0",
+            "content_sha256": "21658619887ad9eb0036311501b5dde9005bea6fc707965c9582c7c63295a40f",
+            "source_sha256": "ef531559ad8be4de3673b78bd5cb11a2e413073ecb966c05d9adaebc674dc608",
+            "context_header": "f09.png > immagine",
+            "snippet_text": "Immagine 1200x800",
+            "content_text": "",
+            "page_num": null,
+            "start_sec": null,
+            "end_sec": null,
+            "created_at": 1792323201.5746634
+          },
+          "cosine_score": 0.8345735967159271,
+          "z_score": 1.72892948636188,
+          "synaptic_boost": 0.0,
+          "final_score": 0.8345735967159271,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        },
+        {
+          "memory": {
+            "id": "6d1eaf4bb30f9e3fb004c7b8e646e1d160da104efbbc36ae29b07048628e30ad",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f06.pdf",
+            "modality": "pdf",
+            "chunk_key": "page:1:part:0",
+            "content_sha256": "99174eb8cb9d862ec835b65f83c8d6158dd941f23549d591c47a3a270beda7d9",
+            "source_sha256": "9e9c6966e0c785eeedd833a148685599e19ed4ca70690c01ff753f7f836d31ea",
+            "context_header": "f06.pdf [Pag. 1]",
+            "snippet_text": "Pagina 1, contenuto visuale; allegato richiesto",
+            "content_text": "Indice\n\n1. Glossario\n\n2. Schema outbox",
+            "page_num": 1,
+            "start_sec": null,
+            "end_sec": null,
+            "created_at": 1792323202.6435072
+          },
+          "cosine_score": 0.7144818305969238,
+          "z_score": 1.08095145225525,
+          "synaptic_boost": 0.0,
+          "final_score": 0.7144818305969238,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        }
+      ],
+      "error": null
+    },
+    {
+      "query_id": "T6",
+      "relevant": [
+        {
+          "file_id": "I2"
+        }
+      ],
+      "hits": [
+        true,
+        false,
+        false,
+        false,
+        false
+      ],
+      "results": [
+        {
+          "memory": {
+            "id": "2da34c28f0cfab127fd83399712e7f0f010d643bf152c0b9deb52591aa60b9ba",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f10.jpg",
+            "modality": "image",
+            "chunk_key": "image:0",
+            "content_sha256": "c9581614dc731d5b2fc28ff6de201030fa39c3d98dfc3b0ca105d33ebf707744",
+            "source_sha256": "78c4d6b2caa3601d5518f7788bcc53c821512477875721fd380840b9befc8bee",
+            "context_header": "f10.jpg > immagine",
+            "snippet_text": "Immagine 1200x800",
+            "content_text": "",
+            "page_num": null,
+            "start_sec": null,
+            "end_sec": null,
+            "created_at": 1792323202.0418637
+          },
+          "cosine_score": 0.8253543823957443,
+          "z_score": 1.7281623495806717,
+          "synaptic_boost": 0.0,
+          "final_score": 0.8253543823957443,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        },
+        {
+          "memory": {
+            "id": "570dc0352a2aefe8cc9fe547755ae0fcc5a1b0b0d25d97a5a7f4ff54dc35b546",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f15.mp4",
+            "modality": "video",
+            "chunk_key": "video:0:45040",
+            "content_sha256": "1a3ff3611109aa061786730a4f880ae21e3d9d83c67386ce6ca325c4623d0655",
+            "source_sha256": "fcf929f17ea48fc88dd4dc92f0bbd721dd01f6fca7f2c76cb4923d81be3b35a1",
+            "context_header": "f15.mp4 > [0.0s, 45.0s)",
+            "snippet_text": "Video 45 s, finestra [0, 45)",
+            "content_text": "",
+            "page_num": null,
+            "start_sec": 0.0,
+            "end_sec": 45.04,
+            "created_at": 1792323206.6268802
+          },
+          "cosine_score": 0.7500176876783371,
+          "z_score": 0.5132202804088593,
+          "synaptic_boost": 0.0,
+          "final_score": 0.7500176876783371,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        },
+        {
+          "memory": {
+            "id": "0a490a752b4b7f08d2d5f43913bae1389703c18b3b63902392b23eb62439f5bb",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f16.mp4",
+            "modality": "video",
+            "chunk_key": "video:0:45040",
+            "content_sha256": "6663f6c5df88dd2b55232acc86d02a2c8839a8b3da3f6f73c243e38279a1fab1",
+            "source_sha256": "da13d0e508192486b6f563cdaa952c8402fe1261c288a0fa9b77929607e0c68f",
+            "context_header": "f16.mp4 > [0.0s, 45.0s)",
+            "snippet_text": "Video 45 s, finestra [0, 45)",
+            "content_text": "",
+            "page_num": null,
+            "start_sec": 0.0,
+            "end_sec": 45.04,
+            "created_at": 1792323207.5338418
+          },
+          "cosine_score": 0.7327141463756561,
+          "z_score": 0.16714945435523987,
+          "synaptic_boost": 0.0,
+          "final_score": 0.7327141463756561,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        },
+        {
+          "memory": {
+            "id": "0f080ed5b67c22c2c50dd219dc3fca2d1436e9d934410956006f4399b7de974b",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f14.mp4",
+            "modality": "video",
+            "chunk_key": "video:0:45040",
+            "content_sha256": "f6e86a6162608cf8e2d790626090ca7943f770a9a7728b88c551d808d41aacd4",
+            "source_sha256": "91884827264120d33b72a9afe256a6fe788069a58f23db7b25438d646193dae6",
+            "context_header": "f14.mp4 > [0.0s, 45.0s)",
+            "snippet_text": "Video 45 s, finestra [0, 45)",
+            "content_text": "",
+            "page_num": null,
+            "start_sec": 0.0,
+            "end_sec": 45.04,
+            "created_at": 1792323205.6719236
+          },
+          "cosine_score": 0.7289273738861084,
+          "z_score": 0.09141400456428528,
+          "synaptic_boost": 0.0,
+          "final_score": 0.7289273738861084,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        },
+        {
+          "memory": {
+            "id": "ca867f3213e9e70533f3017831ca4c775a948523767758cab5ada5d38cb5f252",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f13.mp4",
+            "modality": "video",
+            "chunk_key": "video:0:45000",
+            "content_sha256": "a8f08fca89ea3d22aa854de596934523b0513f12237ffad86410545c522393cd",
+            "source_sha256": "3081b1b3d6d17d37ff705b804aa7d6fd2e5feb689041f2734ba1cbfa9d2e7bf2",
+            "context_header": "f13.mp4 > [0.0s, 45.0s)",
+            "snippet_text": "Video 95 s, finestra [0, 45)",
+            "content_text": "",
+            "page_num": null,
+            "start_sec": 0.0,
+            "end_sec": 45.0,
+            "created_at": 1792323203.5675735
+          },
+          "cosine_score": 0.714975893497467,
+          "z_score": -0.18761560320854187,
+          "synaptic_boost": 0.0,
+          "final_score": 0.714975893497467,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        }
+      ],
+      "error": null
+    },
+    {
+      "query_id": "T7",
+      "relevant": [
+        {
+          "file_id": "V1",
+          "start_sec": 40.0,
+          "end_sec": 85.0
+        }
+      ],
+      "hits": [
+        true,
+        false
+      ],
+      "results": [
+        {
+          "memory": {
+            "id": "907188d9406d41f6b824d67ad63214d54626083a0ff2ed47f5d62c0dec622d40",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f13.mp4",
+            "modality": "video",
+            "chunk_key": "video:40000:85000",
+            "content_sha256": "0645c50b4c5c896b11d474dd1fbd939a7761ae70530088290dda31ba0a6d0bdd",
+            "source_sha256": "3081b1b3d6d17d37ff705b804aa7d6fd2e5feb689041f2734ba1cbfa9d2e7bf2",
+            "context_header": "f13.mp4 > [40.0s, 85.0s)",
+            "snippet_text": "Video 95 s, finestra [40, 85)",
+            "content_text": "",
+            "page_num": null,
+            "start_sec": 40.0,
+            "end_sec": 85.0,
+            "created_at": 1792323204.0505736
+          },
+          "cosine_score": 0.7183979153633118,
+          "z_score": 0.410516162713368,
+          "synaptic_boost": 0.0,
+          "final_score": 0.7183979153633118,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        },
+        {
+          "memory": {
+            "id": "40dd1cb25ebdf2773d2d73213235e1ac959f609ed8f5fff8dc878860d3bb6c62",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f13.mp4",
+            "modality": "video",
+            "chunk_key": "video:80000:95040",
+            "content_sha256": "6828a9eaf32cd0417a86c1b3a6ecbe05964c49aaf91761993373ab4940db650c",
+            "source_sha256": "3081b1b3d6d17d37ff705b804aa7d6fd2e5feb689041f2734ba1cbfa9d2e7bf2",
+            "context_header": "f13.mp4 > [80.0s, 95.0s)",
+            "snippet_text": "Video 95 s, finestra [80, 95)",
+            "content_text": "",
+            "page_num": null,
+            "start_sec": 80.0,
+            "end_sec": 95.04,
+            "created_at": 1792323204.5578542
+          },
+          "cosine_score": 0.7058410048484802,
+          "z_score": 0.15937795241673713,
+          "synaptic_boost": 0.0,
+          "final_score": 0.7058410048484802,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        }
+      ],
+      "error": null
+    },
+    {
+      "query_id": "T8",
+      "relevant": [
+        {
+          "file_id": "V2"
+        }
+      ],
+      "hits": [
+        true,
+        false
+      ],
+      "results": [
+        {
+          "memory": {
+            "id": "0f080ed5b67c22c2c50dd219dc3fca2d1436e9d934410956006f4399b7de974b",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f14.mp4",
+            "modality": "video",
+            "chunk_key": "video:0:45040",
+            "content_sha256": "f6e86a6162608cf8e2d790626090ca7943f770a9a7728b88c551d808d41aacd4",
+            "source_sha256": "91884827264120d33b72a9afe256a6fe788069a58f23db7b25438d646193dae6",
+            "context_header": "f14.mp4 > [0.0s, 45.0s)",
+            "snippet_text": "Video 45 s, finestra [0, 45)",
+            "content_text": "",
+            "page_num": null,
+            "start_sec": 0.0,
+            "end_sec": 45.04,
+            "created_at": 1792323205.6719236
+          },
+          "cosine_score": 0.7162590026855469,
+          "z_score": 0.7049156228701281,
+          "synaptic_boost": 0.0,
+          "final_score": 0.7162590026855469,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        },
+        {
+          "memory": {
+            "id": "17805a6eff78f46951bc245e70dd974939d90f71fb91ee16c79cc11cfc682b7f",
+            "file_path": "/home/maeste/project/artificial_memory/tests/fixtures/ambient/f05.pdf",
+            "modality": "pdf",
+            "chunk_key": "page:2:part:0",
+            "content_sha256": "3cf25c1813910e03bdc6f617406ad64eed82799d8d6df28468e496a285382593",
+            "source_sha256": "20efc145d1975430680d462f8347dc6cd80707a1e82cdf0f4ef3a3364feed0c9",
+            "context_header": "f05.pdf [Pag. 2]",
+            "snippet_text": "Rilascio progressivoIl rollout canary avvia al cinque per cento del traffico complessivo. Gli errori vengono monitorati in tempo reale: il rilascio si interrompe conrollback automatico quando la percentuale di errori supera il due per cento.",
+            "content_text": "Rilascio progressivoIl rollout canary avvia al cinque per cento del traffico complessivo. Gli errori vengono monitorati in tempo reale: il rilascio si interrompe conrollback automatico quando la percentuale di errori supera il due per cento.",
+            "page_num": 2,
+            "start_sec": null,
+            "end_sec": null,
+            "created_at": 1792323202.459102
+          },
+          "cosine_score": 0.7043122351169586,
+          "z_score": 0.8072843551635733,
+          "synaptic_boost": 0.0,
+          "final_score": 0.7043122351169586,
+          "matched_sources": [
+            "agent_text"
+          ],
+          "winning_source": "agent_text"
+        }
+      ],
+      "error": null
+    },
+    {
+      "query_id": "N6",
+      "relevant": [],
+      "hits": [],
+      "results": [],
+      "error": null
+    },
+    {
+      "query_id": "N7",
+      "relevant": [],
+      "hits": [],
+      "results": [],
+      "error": null
+    },
+    {
+      "query_id": "N8",
+      "relevant": [],
+      "hits": [],
+      "results": [],
+      "error": null
+    },
+    {
+      "query_id": "N9",
+      "relevant": [],
+      "hits": [],
+      "results": [],
+      "error": null
+    },
+    {
+      "query_id": "N10",
+      "relevant": [],
+      "hits": [],
+      "results": [],
+      "error": null
+    }
+  ],
+  "counts": {
+    "positives": 8,
+    "negatives": 5,
+    "failures": 0
+  },
+  "gates": {
+    "S1_text": true,
+    "S2_text": true,
+    "S2_audio": "FAIL reale documentato (scope text-only per decisione utente)",
+    "S3": true,
+    "S4_text": true,
+    "S5": "misurato nella run timing dedicata (runner/Storage, end-to-end)"
+  }
+}

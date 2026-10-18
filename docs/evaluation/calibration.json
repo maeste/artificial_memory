@@ -1,0 +1,533 @@
+{
+  "schema_version": 1,
+  "timestamp": "2026-10-18T11:33:06.349913+00:00",
+  "split": "calibration",
+  "audio_policy": "S2-audio FAIL reale documentato (run-1/run-2); scope text-only per decisione utente 2026-10-18",
+  "space": {
+    "model_id": "google/embeddinggemma-2",
+    "revision": "914f7f89142e33e77833254d9c9b90c3cef7303b",
+    "space_id": "a909a1662bdfb650f3db8845b3171986e1aa41b84e97984709094dc2085f7b13",
+    "backend": "real"
+  },
+  "corpus_checksum": "826931eec822747ec13f9fac1480a86c8bc1be0c06832f100cefb125e3c600c5",
+  "candidates": [
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.2,
+      "min_final": 0.0,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 1.0,
+          "mrr_at_5": 0.8125,
+          "negative_abstention": 0.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.2,
+      "min_final": 0.5,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 1.0,
+          "mrr_at_5": 0.8125,
+          "negative_abstention": 0.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.2,
+      "min_final": 1.0,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.75,
+          "mrr_at_5": 0.75,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.2,
+      "min_final": 1.5,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.75,
+          "mrr_at_5": 0.75,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.2,
+      "min_final": 2.0,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.25,
+          "mrr_at_5": 0.25,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.2,
+      "min_final": 2.5,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.25,
+          "mrr_at_5": 0.25,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.3,
+      "min_final": 0.0,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 1.0,
+          "mrr_at_5": 0.8125,
+          "negative_abstention": 0.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.3,
+      "min_final": 0.5,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 1.0,
+          "mrr_at_5": 0.8125,
+          "negative_abstention": 0.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.3,
+      "min_final": 1.0,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.75,
+          "mrr_at_5": 0.75,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.3,
+      "min_final": 1.5,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.75,
+          "mrr_at_5": 0.75,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.3,
+      "min_final": 2.0,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.25,
+          "mrr_at_5": 0.25,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.3,
+      "min_final": 2.5,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.25,
+          "mrr_at_5": 0.25,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.4,
+      "min_final": 0.0,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 1.0,
+          "mrr_at_5": 0.8125,
+          "negative_abstention": 0.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.4,
+      "min_final": 0.5,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 1.0,
+          "mrr_at_5": 0.8125,
+          "negative_abstention": 0.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.4,
+      "min_final": 1.0,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.75,
+          "mrr_at_5": 0.75,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.4,
+      "min_final": 1.5,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.75,
+          "mrr_at_5": 0.75,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.4,
+      "min_final": 2.0,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.25,
+          "mrr_at_5": 0.25,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.4,
+      "min_final": 2.5,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.25,
+          "mrr_at_5": 0.25,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.5,
+      "min_final": 0.0,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 1.0,
+          "mrr_at_5": 0.8125,
+          "negative_abstention": 0.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.5,
+      "min_final": 0.5,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 1.0,
+          "mrr_at_5": 0.8125,
+          "negative_abstention": 0.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.5,
+      "min_final": 1.0,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.75,
+          "mrr_at_5": 0.75,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.5,
+      "min_final": 1.5,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.75,
+          "mrr_at_5": 0.75,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.5,
+      "min_final": 2.0,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.25,
+          "mrr_at_5": 0.25,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.5,
+      "min_final": 2.5,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.25,
+          "mrr_at_5": 0.25,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.6,
+      "min_final": 0.0,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 1.0,
+          "mrr_at_5": 0.8125,
+          "negative_abstention": 0.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.6,
+      "min_final": 0.5,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 1.0,
+          "mrr_at_5": 0.8125,
+          "negative_abstention": 0.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.6,
+      "min_final": 1.0,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.75,
+          "mrr_at_5": 0.75,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.6,
+      "min_final": 1.5,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.75,
+          "mrr_at_5": 0.75,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.6,
+      "min_final": 2.0,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.25,
+          "mrr_at_5": 0.25,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.6,
+      "min_final": 2.5,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.25,
+          "mrr_at_5": 0.25,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.7,
+      "min_final": 0.0,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 1.0,
+          "mrr_at_5": 0.8125,
+          "negative_abstention": 0.8
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.7,
+      "min_final": 0.5,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 1.0,
+          "mrr_at_5": 0.8125,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.7,
+      "min_final": 1.0,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.75,
+          "mrr_at_5": 0.75,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.7,
+      "min_final": 1.5,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.75,
+          "mrr_at_5": 0.75,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.7,
+      "min_final": 2.0,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.25,
+          "mrr_at_5": 0.25,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "zscore",
+      "min_cosine": 0.7,
+      "min_final": 2.5,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 0.25,
+          "mrr_at_5": 0.25,
+          "negative_abstention": 1.0
+        }
+      }
+    },
+    {
+      "score_mode": "cosine",
+      "min_cosine": 0.2,
+      "min_final": 0.2,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 1.0,
+          "mrr_at_5": 1.0,
+          "negative_abstention": 0.0
+        }
+      }
+    },
+    {
+      "score_mode": "cosine",
+      "min_cosine": 0.3,
+      "min_final": 0.3,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 1.0,
+          "mrr_at_5": 1.0,
+          "negative_abstention": 0.0
+        }
+      }
+    },
+    {
+      "score_mode": "cosine",
+      "min_cosine": 0.4,
+      "min_final": 0.4,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 1.0,
+          "mrr_at_5": 1.0,
+          "negative_abstention": 0.0
+        }
+      }
+    },
+    {
+      "score_mode": "cosine",
+      "min_cosine": 0.5,
+      "min_final": 0.5,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 1.0,
+          "mrr_at_5": 1.0,
+          "negative_abstention": 0.0
+        }
+      }
+    },
+    {
+      "score_mode": "cosine",
+      "min_cosine": 0.6,
+      "min_final": 0.6,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 1.0,
+          "mrr_at_5": 1.0,
+          "negative_abstention": 0.0
+        }
+      }
+    },
+    {
+      "score_mode": "cosine",
+      "min_cosine": 0.7,
+      "min_final": 0.7,
+      "metrics": {
+        "agent_text": {
+          "hit_at_5": 1.0,
+          "mrr_at_5": 1.0,
+          "negative_abstention": 0.8
+        }
+      }
+    }
+  ],
+  "grid_note": "griglia cosine estenda a 0.70 dopo calibrazione 2026-10-18: gold calibrazione 0.726-0.828 (rank 1), negative 0.644-0.700; direzione più severa, criteri invariati",
+  "selected": {
+    "score_mode": "cosine",
+    "min_cosine": 0.7,
+    "min_final": 0.7,
+    "metrics": {
+      "agent_text": {
+        "hit_at_5": 1.0,
+        "mrr_at_5": 1.0,
+        "negative_abstention": 0.8
+      }
+    }
+  },
+  "pass": true
+}

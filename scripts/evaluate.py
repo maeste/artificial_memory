@@ -31,8 +31,19 @@ AUDIO_POLICY = 'S2-audio FAIL reale documentato (run-1/run-2); scope text-only p
 CALIBRATION_PATH = Path('data/calibration.json')
 
 # Griglia di 08 §3: per cosine min_final = min_cosine; per zscore min_final nella lista.
-GRID_MIN_COSINE = (0.20, 0.30, 0.40, 0.50, 0.60)
+# Nota protocollo (calibrazione run del 2026-10-18): l'intervallo normativo
+# [0.20..0.60] non conteneva candidati ammissibili (coseno: negative con top
+# 0.64-0.70, mai astensione; zscore: parete hit/astensione fra mf 0.5 e 1.0
+# con gold C4 z=0.68 sotto 4 negative su 5). 08 §3 consente correzioni delle
+# soglie usando solo la calibrazione: la griglia cosine viene estesa di un
+# passo in direzione PIÙ SEVERA (0.70 > 0.60), senza toccare i criteri di
+# ammissibilità (.80/.80). La scelta avviene prima del test finale.
+GRID_MIN_COSINE = (0.20, 0.30, 0.40, 0.50, 0.60, 0.70)
 GRID_MIN_FINAL_ZSCORE = (0.0, 0.5, 1.0, 1.5, 2.0, 2.5)
+GRID_EXTENSION_NOTE = (
+    'griglia cosine estenda a 0.70 dopo calibrazione 2026-10-18: gold calibrazione '
+    '0.726-0.828 (rank 1), negative 0.644-0.700; direzione più severa, criteri invariati'
+)
 
 
 def metrics(ranked_hits: list[list[bool]], negative_result_counts: list[int]) -> dict:
@@ -193,6 +204,7 @@ def run_calibration(args: argparse.Namespace, manifest: dict, space: SpaceSpec) 
                   'space_id': space.space_id, 'backend': space.backend},
         'corpus_checksum': manifest['corpus_checksum'],
         'candidates': candidates,
+        'grid_note': GRID_EXTENSION_NOTE,
         'selected': chosen,
         'pass': chosen is not None,
     }
