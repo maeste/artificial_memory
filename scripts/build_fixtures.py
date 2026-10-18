@@ -23,8 +23,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.contracts import EmbedRequest, MemoryView, make_memory_id  # noqa: E402
 
-GENERATOR_VERSION = '1.0'
+GENERATOR_VERSION = '1.1'
 FIXED_EPOCH = 1792300000.0
+# Voci TTS distinte per query e narrazioni video: la run 1 del gate Fase 1 ha
+# mostrato che una voce unica crea un confound audio-audio (la query vocale
+# matcha le narrazioni per timbro prima che per contenuto). I 16 file del
+# corpus non cambiano; cambia solo il timbro delle query WAV.
+NARRATION_VOICE = 'it'
+QUERY_VOICE = 'it+f4'
+FIXTURE_NOTES = [
+    'v1.1 (post gate-run-1): query WAV generate con voce espeak-ng "it+f4" '
+    'mentre le narrazioni video restano "it", per rimuovere il confound '
+    'voce-query == voce-narrazione osservato nel report fallito della prima '
+    'esecuzione del gate Fase 1 (audio 2/4: C1/C2 mancate con cluster vocale '
+    'piatto 0.66-0.73). Contenuti dei file, testi delle query e gold invariati.',
+]
 FPS = 2  # frame per secondo generati per i video
 SIZE = (1200, 800)
 FONT_CANDIDATES = [
@@ -192,8 +205,8 @@ def _run(cmd: list[str], timeout: int = 120) -> None:
         raise RuntimeError(f'comando fallito {cmd[:3]}: {result.stderr.decode(errors="replace")[:300]}')
 
 
-def _espeak_wav(text: str, out: Path) -> None:
-    _run(['espeak-ng', '-v', 'it', '-s', '150', '-w', str(out), text])
+def _espeak_wav(text: str, out: Path, voice: str) -> None:
+    _run(['espeak-ng', '-v', voice, '-s', '150', '-w', str(out), text])
 
 
 def _wav_to_16k_mono(src: Path, dst: Path) -> None:
@@ -211,9 +224,9 @@ def _deterministic_pdf_id(path: Path) -> None:
 
 
 def _repeat_voice(phrase: str, duration_sec: float, out_16k: Path, workdir: Path) -> None:
-    """Ripete la frase con pause fino alla durata richiesta, WAV mono 16 kHz."""
+    """Ripete la frase (voce narrazione) con pause fino alla durata richiesta."""
     one = workdir / 'phrase.wav'
-    _espeak_wav(phrase, one)
+    _espeak_wav(phrase, one, NARRATION_VOICE)
     with wave.open(str(one), 'rb') as handle:
         params = handle.getparams()
         frames = handle.readframes(handle.getnframes())
@@ -634,7 +647,7 @@ class FixtureBuilder:
     def _one_query(self, query_id: str, split: str, text: str, gold: list, workdir: Path) -> dict:
         raw = workdir / f'query-{query_id}-raw.wav'
         final = self.output / f'query-{query_id}.wav'
-        _espeak_wav(text, raw)
+        _espeak_wav(text, raw, QUERY_VOICE)
         _wav_to_16k_mono(raw, final)
         relevant = []
         for file_id, page in gold:
@@ -665,6 +678,8 @@ class FixtureBuilder:
         manifest = {
             'schema_version': 1,
             'generator_version': GENERATOR_VERSION,
+            'fixture_notes': FIXTURE_NOTES,
+            'voices': {'queries': QUERY_VOICE, 'narrations': NARRATION_VOICE},
             'tool_versions': tool_versions,
             'corpus_checksum': corpus.hexdigest(),
             'files': [self.files[key] for key in sorted(self.files)],
