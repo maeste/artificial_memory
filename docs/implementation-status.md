@@ -1,5 +1,26 @@
 # Stato di implementazione — Ambient Second Brain
 
+**ATTUALE — Enhancement `enhancement/multi-agent-system-audio`** (piano approvato 2026-10-25,
+file ~/.claude/plans/majestic-rolling-duckling.md):
+
+| Fase | Contenuto | Assegnatario | Stato |
+|---|---|---|---|
+| Contratti | Source += system_audio, AUDIO_SOURCES, modality audio | Orchestrator | ✅ committato sul branch (54 test verdi) |
+| F1 | system_audio query-only: runner hardcode→AUDIO_SOURCES, MicSensor parametrizzato, parec -d @DEFAULT_MONITOR@ | Agent-4 | 🔧 in corso (TDD) |
+| F2 | multi-log whitelist + --auto-last, codex-jsonl parser, discovery | Agent-4 | 🔧 in coda dopo F1 |
+| F3-storage | registry session_memories, purge atomica, promoted | Agent-1 | 🔧 dispatchato |
+| F3-HUD | header sistema/log N, badge sessione, Promuovi, exporter | Agent-5 | 🔧 dispatchato |
+| F4 | live transcription opzionale (default off) | Agent-4 + riusa LocalTranscriber | ⏳ dopo F3 |
+| F5 | PRD revisione non-obiettivi, preflight warn-only, docs, checklist live | Orchestrator | ⏳ |
+
+Principi vincolanti approvati dall'utente: **il live fa emergere ricordi, non li crea**
+(default query-only; archive_sources opt-in per sorgente); ricordi di sessione cancellati
+su new_session; **promozione = promuovere il CONTESTO** (contenitore con metadati + marker
+pinnato + contesto circostante), mai il frammento nudo; contesto per LLM a due livelli
+(estratto + riferimento alla fonte intera).
+
+# Stato di implementazione — Ambient Second Brain
+
 Aggiornato dall'Orchestrator: 2026-10-18, verifica finale. Versione contratto: **1.0**
 (+ note di revisione datate in 07 §5 e 08 §3). Scope: **text-only per decisione
 utente**; S2-audio FAIL reale documentato. Distinzioni mantenute ovunque:
