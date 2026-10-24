@@ -119,12 +119,12 @@ def main(argv: list[str] | None = None) -> int:
     extra_state = {
         'mic_enabled': config.mic_enabled, 'show_all': args.show_all,
         'transcription': args.transcription, 'agent_format': args.agent_format,
+        'asr_model_dir': args.asr_model_dir,
     }
-    children = None
+    base = Launcher(config_path=str(config_path), space=space, paths=paths,
+                    headless=True, extra_state=extra_state)
+    children = base.children
     if args.agent_log or args.no_mic:
-        base = Launcher(config_path=str(config_path), space=space, paths=paths,
-                        headless=True)  # comandi default; run_poc li specializza sotto
-        children = base.children
         runner_extra = ['--agent-log', args.agent_log] if args.agent_log else []
         runner_extra += ['--agent-format', args.agent_format]
         if args.no_mic:

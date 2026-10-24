@@ -62,8 +62,8 @@ class Launcher:
         self.headless = headless
         self.python_exe = python_exe or sys_python()
         self.startup_timeout_sec = startup_timeout_sec
-        self.children = children or self._default_children()
         self.extra_state = extra_state or {}
+        self.children = children or self._default_children()
         self.child_pids: dict[str, int] = {}
         self.error_report: str | None = None
         self.started_all = False
@@ -77,11 +77,16 @@ class Launcher:
 
     def _default_children(self) -> dict[str, list[str]]:
         config = ['--config', self.config_path]
+        hud = [self.python_exe, '-m', 'src.hud.app', '--runtime', self.paths.run_dir]
+        if self.extra_state.get('transcription'):
+            hud += ['--transcription', self.extra_state['transcription']]
+        if self.extra_state.get('transcription') == 'local' and self.extra_state.get('asr_model_dir'):
+            hud += ['--asr-model-dir', self.extra_state['asr_model_dir']]
         children = {
             'inference': [self.python_exe, '-m', 'src.inference', 'serve'] + config,
             'watcher': [self.python_exe, '-m', 'src.ingestion.watcher'] + config,
             'runner': [self.python_exe, '-m', 'src.sensors.runner'] + config,
-            'hud': [self.python_exe, '-m', 'src.hud.app'] + config,
+            'hud': hud,
         }
         return children
 
