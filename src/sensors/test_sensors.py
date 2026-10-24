@@ -61,7 +61,7 @@ def snapshot_cmd(command_id: str = 'cmd-snap', session_id: str | None = None) ->
 class RunnerHarness:
     """RunnerService con fake, clock controllato e alpha=1 (EMA = ultimo vettore)."""
 
-    def __init__(self, tmp_path, storage=None, client=None, clock=None, settings=None, **kwargs):
+    def __init__(self, tmp_path, storage=None, client=None, clock=None, settings=None, alpha: float = 1.0, **kwargs):
         import os
 
         from src.contracts import RuntimePaths
@@ -87,7 +87,7 @@ class RunnerHarness:
         self.settings = settings if settings is not None else SearchSettings()
         self.service = RunnerService(
             self.storage, self.client, self.paths, self.settings,
-            clock=self.clock.time, alpha=1.0, **kwargs,
+            clock=self.clock.time, alpha=alpha, **kwargs,
         )
 
     def ingest_text(self, text: str, **kwargs):

@@ -4,6 +4,7 @@ Fake client/DB in fakes.py; nessun hardware. I test server usano socket IPC
 reali in directory temporanee (livello «integrazione mock», 08 §1).
 """
 
+import json
 import time
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from src.sensors.test_sensors import (
     sysaudio_input,
     text_input,
 )
+from src.sensors.test_sensors import unit
 
 
 def pin_cmd(session: str, memory_id: str, command_id: str) -> HudCommand:
@@ -931,3 +933,144 @@ class TestSessionArchiveRealStorage:
             assert storage.get_memory(memory_id) is None
         finally:
             storage.close()
+
+
+# --------------------------------------------------------------------------- F4: trascrizione live
+
+
+class SpyTranscriber:
+    """F4: transcriber finto col protocollo .transcribe(wav_path) -> str."""
+
+    def __init__(self, transcript: str = 'voce trascritta dal modello', error: Exception | None = None):
+        self.transcript = transcript
+        self.error = error
+        self.calls: list[str] = []
+
+    def transcribe(self, wav_path: str) -> str:
+        self.calls.append(wav_path)
+        if self.error is not None:
+            raise self.error
+        return self.transcript
+
+
+class TestLiveTranscription:
+    """F4: trascrizione sincrona nel worker, doppia query audio+testo, EMA doppia."""
+
+    @staticmethod
+    def _wav(harness, name: str = 'voce-f4.wav') -> str:
+        wav = harness.mic_path(name)
+        Path(wav).write_bytes(b'RIFF' + b'\0' * 64)
+        return wav
+
+    def test_audio_transcribed_two_queries_in_order(self, tmp_path):
+        transcriber = SpyTranscriber('quanto dura la cache')
+        harness = RunnerHarness(tmp_path, transcriber=transcriber)
+        wav = self._wav(harness)
+        harness.client.vectors['quanto dura la cache'] = unit([1.0] + [0.0] * 255)
+        harness.client.vectors[wav] = unit([0.0, 1.0] + [0.0] * 254)
+
+        event = harness.service.ingest(
+            mic_input(wav, duration=0.5, session=harness.service.session_id)
+        )
+
+        assert transcriber.calls == [wav]  # una sola trascrizione
+        req_audio, req_text = harness.client.requests[-2], harness.client.requests[-1]
+        assert req_audio.audio_path == wav and req_audio.text_payload == ''
+        assert req_text.audio_path is None and req_text.text_payload == 'quanto dura la cache'
+        # il transcript è nella storia pubblicata (replace PRIMA dell'append)
+        assert any(item.text == 'quanto dura la cache' for item in event.latest_inputs)
+
+    def test_double_ema_update_text_wins_with_alpha_one(self, tmp_path):
+        transcriber = SpyTranscriber('cerca il testo trascritto')
+        storage = FakeStorage()
+        harness = RunnerHarness(tmp_path, storage=storage, transcriber=transcriber)  # alpha=1
+        wav = self._wav(harness, 'voce-ema.wav')
+        audio_vec = unit([1.0] + [0.0] * 255)
+        text_vec = unit([0.0, 1.0] + [0.0] * 254)
+        harness.client.vectors[wav] = audio_vec
+        harness.client.vectors['cerca il testo trascritto'] = text_vec
+
+        harness.service.ingest(mic_input(wav, duration=0.5, session=harness.service.session_id))
+
+        searched = [tuple(vec) for vec, _ in storage.search_calls]
+        assert searched[-1] == tuple(text_vec)  # alpha=1: l'ultimo update è il testo
+
+        # prova del DOPPIO update: con alpha=0.5 l'EMA è la media dei due vettori
+        blend = unit((np.asarray(audio_vec) + np.asarray(text_vec)) / 2.0)
+        transcriber_half = SpyTranscriber('cerca il testo trascritto')
+        storage_half = FakeStorage()
+        harness_half = RunnerHarness(tmp_path, storage=storage_half,
+                                     transcriber=transcriber_half, alpha=0.5)
+        wav_half = self._wav(harness_half, 'voce-ema2.wav')
+        harness_half.client.vectors[wav_half] = audio_vec
+        harness_half.client.vectors['cerca il testo trascritto'] = text_vec
+        harness_half.service.ingest(mic_input(wav_half, duration=0.5,
+                                              session=harness_half.service.session_id))
+        assert tuple(storage_half.search_calls[-1][0]) == tuple(blend)
+
+    def test_transcribe_error_continues_audio_only(self, tmp_path):
+        transcriber = SpyTranscriber(error=RuntimeError('modello giù'))
+        harness = RunnerHarness(tmp_path, transcriber=transcriber)
+        wav = self._wav(harness, 'voce-err.wav')
+
+        event = harness.service.ingest(
+            mic_input(wav, duration=0.5, session=harness.service.session_id)
+        )
+
+        assert transcriber.calls == [wav]
+        assert event.sensor_status.get('transcribe_error') == 'modello giù'
+        assert len(harness.client.requests) == 1  # solo la query audio
+        assert harness.client.requests[-1].audio_path == wav
+        assert all(item.text == '' for item in event.latest_inputs)
+
+    def test_transcript_lands_in_session_memory(self, tmp_path):
+        transcriber = SpyTranscriber('memoria vocale trascritta')
+        storage = FakeStorage()
+        harness = RunnerHarness(tmp_path, storage=storage, transcriber=transcriber,
+                                archive_sources=frozenset({'mic_audio'}))
+        wav = self._wav(harness, 'voce-arc.wav')
+
+        harness.service.ingest(mic_input(wav, duration=0.5, session=harness.service.session_id))
+
+        memory_id = next(iter(storage.session_registry))
+        memory, _ = storage.records[memory_id]
+        assert memory.content_text == 'memoria vocale trascritta'
+        # il documento di sessione si embedda dal testo del transcript
+        req = harness.client.requests[-1]
+        assert req.is_query is False
+        assert req.text_payload == 'memoria vocale trascritta'
+        assert req.audio_path is None
+
+    def test_default_off_identical_to_today(self, tmp_path):
+        harness = RunnerHarness(tmp_path)
+        wav = self._wav(harness, 'voce-off.wav')
+        event = harness.service.ingest(
+            mic_input(wav, duration=0.5, session=harness.service.session_id)
+        )
+        assert len(harness.client.requests) == 1
+        assert harness.client.requests[-1].audio_path == wav
+        assert 'transcribe_error' not in event.sensor_status
+        assert all(item.text == '' for item in event.latest_inputs)
+
+    def test_agent_text_never_transcribed(self, tmp_path):
+        transcriber = SpyTranscriber()
+        harness = RunnerHarness(tmp_path, transcriber=transcriber)
+        harness.ingest_text('testo normale')
+        assert transcriber.calls == []
+
+    def test_main_rejects_unknown_live_transcription(self, tmp_path):
+        from src.sensors.runner import main
+
+        config = tmp_path / 'cfg.json'
+        config.write_text(json.dumps({'live_transcription': 'cloud'}), encoding='utf-8')
+        assert main(['--config', str(config)]) == 2
+
+    def test_main_local_without_model_exits_two(self, tmp_path):
+        from src.sensors.runner import main
+
+        config = tmp_path / 'cfg.json'
+        config.write_text(json.dumps({
+            'live_transcription': 'local',
+            'asr_model_dir': str(tmp_path / 'modello-assente'),
+        }), encoding='utf-8')
+        assert main(['--config', str(config)]) == 2

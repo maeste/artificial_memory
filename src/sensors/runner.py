@@ -137,6 +137,7 @@ class RunnerService:
         show_all: bool = False,
         sensor_enabled: Mapping[str, bool] | None = None,
         archive_sources: frozenset[str] | None = None,
+        transcriber=None,
     ):
         self.storage = storage
         self.embed_client = embed_client
@@ -180,6 +181,9 @@ class RunnerService:
         for source in self.archive_sources:
             if source not in SOURCE_VALUES:
                 raise ValueError(f'INVALID_REQUEST: sorgente non ammessa: {source!r}')
+        # Trascrizione live (F4): oggetto col protocollo .transcribe(wav_path)->str
+        # (LocalTranscriber); None = off, gli input audio restano senza testo.
+        self.transcriber = transcriber
         # Note esterne persistenti nel sensor_status (es. conteggio tail):
         # sopravvivono al reset di sessione, a differenza di _sensor_status.
         self._sensor_notes: dict[str, str] = {}
@@ -200,12 +204,14 @@ class RunnerService:
         if self._session_full(item):
             self._session_suspended = True
             raise ValueError('SESSION_FULL: limiti di sessione raggiunti, input sospesi')
+        # Trascrizione live sincrona nel worker (F4): il transcript sostituisce
+        # il testo dell'input PRIMA dell'append in storia.
+        item = self._transcribe_live(item)
         # La storia registra l'input PRIMA dell'inferenza: resta esportabile
         # anche se il modello fallisce (piano L1).
         self._history.append(item)
         self._register_audio(item)
-        vector = self._embed(item)
-        if vector is not None:
+        for vector in self._embed_queries(item):
             try:
                 self._trackers[item.source].update(vector)
             except ValueError as exc:
@@ -464,7 +470,11 @@ class RunnerService:
             text_payload, audio_path = item.text, None
         else:
             file_path = item.audio_path or ''
-            text_payload, audio_path = '', item.audio_path
+            if item.text:
+                # transcript disponibile (F4): il documento si embedda dal testo
+                text_payload, audio_path = item.text, None
+            else:
+                text_payload, audio_path = '', item.audio_path
         request = EmbedRequest(
             request_id=uuid.uuid4().hex,
             is_query=False,
@@ -532,18 +542,60 @@ class RunnerService:
         except OSError:
             return int((item.duration_sec or 0.0) * 32000)  # PCM 16 kHz mono int16
 
-    def _embed(self, item: LiveInput) -> list[float] | None:
+    def _transcribe_live(self, item: LiveInput) -> LiveInput:
+        """Trascrive un input audio muto se un transcriber è configurato (F4).
+
+        Sincrono nel worker; un fallimento è diagnostica (transcribe_error) e
+        l'input prosegue audio-only. Senza transcriber, per il testo già
+        presente o senza audio_path: nessun cambiamento.
+        """
+        if self.transcriber is None or item.source not in AUDIO_SOURCES or item.text:
+            return item
+        if not item.audio_path:
+            return item
+        try:
+            transcript = str(self.transcriber.transcribe(item.audio_path)).strip()
+        except Exception as exc:  # noqa: BLE001 — l'ASR può fallire: si prosegue audio-only
+            code = getattr(exc, 'code', None) or str(exc) or type(exc).__name__
+            self._sensor_status['transcribe_error'] = code
+            return item
+        if not transcript:
+            return item
+        self._sensor_status.pop('transcribe_error', None)
+        return replace(item, text=transcript)
+
+    def _embed_queries(self, item: LiveInput) -> list[list[float]]:
+        """Vettori query dell'input: audio E testo separati se trascritto (F4).
+
+        Un input audio con transcript produce due query (prima l'audio, poi
+        il testo), ciascuna con il proprio update EMA; i fallimenti sono
+        per-query diagnostica e i vettori riusciti aggiornano comunque l'EMA.
+        """
+        if item.source in AUDIO_SOURCES:
+            queries = [(item.audio_path, '')]
+            if item.text:
+                queries.append((None, item.text))
+        else:
+            queries = [(None, item.text or '')]
+        vectors = []
+        for audio_path, text_payload in queries:
+            vector = self._embed_one(item.source, audio_path=audio_path, text_payload=text_payload)
+            if vector is not None:
+                vectors.append(vector)
+        return vectors
+
+    def _embed_one(self, source: str, *, audio_path: str | None, text_payload: str) -> list[float] | None:
         request = EmbedRequest(
             request_id=uuid.uuid4().hex,
             is_query=True,
-            text_payload=item.text if item.source == 'agent_text' else '',
-            audio_path=item.audio_path if item.source in AUDIO_SOURCES else None,
+            text_payload=text_payload,
+            audio_path=audio_path,
         )
         try:
             return self.embed_client.embed(request)
         except Exception as exc:  # noqa: BLE001 — ogni fallimento inferenza è diagnostica
             code = getattr(exc, 'code', None) or str(exc) or type(exc).__name__
-            self._sensor_status[f'{item.source}_error'] = code
+            self._sensor_status[f'{source}_error'] = code
             return None
 
     def _active_sources(self, now: float) -> list[str]:
@@ -1005,6 +1057,23 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     config = load_config(args.config)
+    # La trascrizione live si valida PRIMA di toccare runtime e socket:
+    # una configurazione non disponibile è un exit 2 esplicito, senza mezzi
+    # avvii (F4).
+    live_mode = str(config.get('live_transcription', 'off'))
+    if live_mode not in ('off', 'local'):
+        print(f'runner: live_transcription non ammessa: {live_mode!r} (off|local)', file=sys.stderr)
+        return 2
+    transcriber = None
+    if live_mode == 'local':
+        from src.hud import transcriber as asr
+
+        model_dir = config.get('asr_model_dir')
+        ready, detail = asr.preflight_local(model_dir)
+        if not ready:
+            print(f'runner: trascrizione local non pronta ({detail}); avvio negato', file=sys.stderr)
+            return 2
+        transcriber = asr.LocalTranscriber(str(model_dir), str(config.get('asr_language', 'it')))
     space, paths, search = build_runtime(config)
 
     from src.inference.client import EmbedClient
@@ -1025,6 +1094,7 @@ def main(argv: list[str] | None = None) -> int:
         # Lo status rispecchia la realtà della cattura: --no-mic è 'off' (F2).
         sensor_enabled={'mic_audio': not args.no_mic, 'system_audio': args.system_audio},
         archive_sources=frozenset(config.get('archive_sources') or ()),
+        transcriber=transcriber,
     )
     server = RunnerServer(service, command_timeout_sec=config.get('command_timeout_ms', 2000) / 1000)
     server.start()
