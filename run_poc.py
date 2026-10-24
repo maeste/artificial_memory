@@ -32,7 +32,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument('--watch-dir', required=True)
     parser.add_argument('--backend', choices=['real', 'mock'], default='real')
     parser.add_argument('--agent-log', default=None)
-    parser.add_argument('--agent-format', choices=['plain', 'claude-jsonl'], default='plain')
+    parser.add_argument('--agent-format', choices=['plain', 'claude-jsonl', 'codex-jsonl'],
+                        default='plain')
+    parser.add_argument('--agent-logs', action='append', default=None, metavar='PATH[:FORMAT]',
+                        help='log agente aggiuntivo (ripetibile; default formato = --agent-format)')
+    parser.add_argument('--auto-last', action='store_true',
+                        help='scopri le ultime sessioni claude/codex per il runner')
     parser.add_argument('--no-mic', action='store_true')
     parser.add_argument('--system-audio', action='store_true',
                         help="cattura anche l'audio di sistema (monitor PipeWire)")
@@ -127,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
         'session_audio_max_bytes': config.session_audio_max_bytes,
         'show_all': args.show_all,
         'agent_log': args.agent_log, 'agent_format': args.agent_format,
+        'agent_logs': args.agent_logs, 'auto_last': args.auto_last,
         'transcription': args.transcription, 'asr_model_dir': args.asr_model_dir,
     }, indent=2, ensure_ascii=False), encoding='utf-8')
 
@@ -138,9 +144,13 @@ def main(argv: list[str] | None = None) -> int:
     base = Launcher(config_path=str(config_path), space=space, paths=paths,
                     headless=True, extra_state=extra_state)
     children = base.children
-    if args.agent_log or args.no_mic or args.system_audio:
+    if args.agent_log or args.no_mic or args.system_audio or args.agent_logs or args.auto_last:
         runner_extra = ['--agent-log', args.agent_log] if args.agent_log else []
         runner_extra += ['--agent-format', args.agent_format]
+        for spec in args.agent_logs or []:
+            runner_extra += ['--agent-logs', spec]
+        if args.auto_last:
+            runner_extra += ['--auto-last']
         if args.no_mic:
             runner_extra += ['--no-mic']
         if args.system_audio:

@@ -739,6 +739,51 @@ def build_runtime(config: dict) -> tuple[SpaceSpec, RuntimePaths, SearchSettings
     return space, paths, search
 
 
+def build_log_specs(args, home: str | None = None) -> list[tuple[str, str]]:
+    """Specifiche (path, formato) dei tail agente: PURA e deterministica (F2).
+
+    --agent-log e --agent-logs sono espliciti e vincono su --auto-last in caso
+    di stesso file (dedup su os.path.realpath, primo in ordine CLI). L'entry
+    ``PATH[:FORMAT]`` senza formato usa --agent-format; un formato non ammesso
+    è un errore esplicito prima di aprire qualunque tail.
+    """
+    from src.sensors.agent_discovery import discover_auto_last
+    from src.sensors.agent_sensor import FORMATS
+
+    explicit: list[tuple[str, str]] = []
+    if getattr(args, 'agent_log', None):
+        explicit.append((args.agent_log, args.agent_format))
+    for entry in getattr(args, 'agent_logs', None) or []:
+        path, sep, fmt = entry.partition(':')
+        if sep:
+            if fmt not in FORMATS:
+                raise ValueError(
+                    f"INVALID_REQUEST: formato non ammesso per {path!r}: {fmt!r} "
+                    f"({'|'.join(FORMATS)})"
+                )
+            explicit.append((path, fmt))
+        else:
+            explicit.append((entry, args.agent_format))
+
+    specs: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for path, fmt in explicit:
+        real = os.path.realpath(path)
+        if real in seen:
+            continue
+        seen.add(real)
+        specs.append((path, fmt))
+    if getattr(args, 'auto_last', False):
+        for path, fmt in discover_auto_last(('claude', 'codex'),
+                                            getattr(args, 'project_cwd', None), home):
+            real = os.path.realpath(path)
+            if real in seen:
+                continue
+            seen.add(real)
+            specs.append((path, fmt))
+    return specs
+
+
 def main(argv: list[str] | None = None) -> int:
     """Runner standalone:   python -m src.sensors.runner --config PATH ..."""
     import signal
@@ -747,7 +792,20 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description='Runner live dei sensori (Agent-4)')
     parser.add_argument('--config', default=None, help='config JSON condiviso (launcher/bootstrap)')
     parser.add_argument('--agent-log', default=None, help='path esplicito del log agente')
-    parser.add_argument('--agent-format', choices=('plain', 'claude-jsonl'), default='plain')
+    parser.add_argument('--agent-format', choices=('plain', 'claude-jsonl', 'codex-jsonl'),
+                        default='plain')
+    parser.add_argument(
+        '--agent-logs', action='append', default=None, metavar='PATH[:FORMAT]',
+        help='log agente aggiuntivo (ripetibile; default formato = --agent-format)',
+    )
+    parser.add_argument(
+        '--auto-last', action='store_true',
+        help='scopri le ultime sessioni claude/codex (dedup sui path espliciti)',
+    )
+    parser.add_argument(
+        '--project-cwd', default=None,
+        help='cwd del progetto per --auto-last (slug ~/.claude/projects)',
+    )
     parser.add_argument('--no-mic', action='store_true', help='disattiva la cattura microfono')
     parser.add_argument(
         '--system-audio', action='store_true',
@@ -789,16 +847,19 @@ def main(argv: list[str] | None = None) -> int:
 
         server.queue.put(item, on_drop=on_drop)
 
-    tail = None
-    if args.agent_log:
+    tails = []
+    for log_path, log_format in build_log_specs(args):
         from src.sensors.agent_sensor import AgentLogTail
 
         tail = AgentLogTail(
-            args.agent_log, args.agent_format,
+            log_path, log_format,
             session_provider=lambda: service.session_id,
             start='beginning' if args.replay_log else 'end',
         )
-        print(f'runner: tail su {args.agent_log} ({args.agent_format})', file=sys.stderr)
+        tails.append(tail)
+        print(f'runner: tail su {log_path} ({log_format})', file=sys.stderr)
+    if tails:
+        service.note_sensor('agent_logs', str(len(tails)))
 
     captures = []
 
@@ -852,14 +913,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         while True:
             time.sleep(0.05)
-            if tail is not None:
+            for tail in tails:
                 item = tail.poll()
                 if item is not None:
                     enqueue(item)
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:
-        print(f'runner: arresto; diagnostica tail: {tail.diagnostics if tail else "n/d"}', file=sys.stderr)
+        diagnostics = '; '.join(f'{tail.path}: {tail.diagnostics}' for tail in tails) or 'n/d'
+        print(f'runner: arresto; diagnostica tail: {diagnostics}', file=sys.stderr)
         server.close()
         for capture_obj in captures:
             capture_obj.stop()

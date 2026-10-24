@@ -602,6 +602,77 @@ class TestParseAgentLine:
             parse_agent_line('{"type":"user", broken', 'claude-jsonl')
 
 
+class TestParseCodexLine:
+    """F2: rollout Codex — response_item/message con blocchi input_text/output_text."""
+
+    def test_user_input_text(self):
+        from src.sensors.agent_sensor import parse_agent_line
+
+        line = ('{"timestamp":"2026-10-25T10:00:00.000Z","type":"response_item",'
+                '"payload":{"type":"message","role":"user",'
+                '"content":[{"type":"input_text","text":"come ottimizzo la cache?"}]}}')
+        assert parse_agent_line(line, 'codex-jsonl') == 'come ottimizzo la cache?'
+
+    def test_assistant_output_text(self):
+        from src.sensors.agent_sensor import parse_agent_line
+
+        line = ('{"type":"response_item","payload":{"type":"message","role":"assistant",'
+                '"content":[{"type":"output_text","text":"La cache riduce i tempi."}]}}')
+        assert parse_agent_line(line, 'codex-jsonl') == 'La cache riduce i tempi.'
+
+    def test_multiple_blocks_joined(self):
+        from src.sensors.agent_sensor import parse_agent_line
+
+        line = ('{"type":"response_item","payload":{"type":"message","role":"assistant",'
+                '"content":[{"type":"output_text","text":"prima parte."},'
+                '{"type":"output_text","text":"seconda parte."}]}}')
+        assert parse_agent_line(line, 'codex-jsonl') == 'prima parte.\nseconda parte.'
+
+    def test_ignores_other_types_and_payload_kinds(self):
+        from src.sensors.agent_sensor import parse_agent_line
+
+        assert parse_agent_line('{"type":"session_meta","payload":{"id":"x"}}', 'codex-jsonl') is None
+        assert parse_agent_line('{"type":"turn_context","payload":{"cwd":"/x"}}', 'codex-jsonl') is None
+        assert parse_agent_line('{"type":"event_msg","payload":{"type":"agent_message"}}', 'codex-jsonl') is None
+        assert parse_agent_line(
+            '{"type":"response_item","payload":{"type":"function_call","name":"Bash"}}', 'codex-jsonl'
+        ) is None
+        assert parse_agent_line(
+            '{"type":"response_item","payload":{"type":"reasoning","summary":[]}}', 'codex-jsonl'
+        ) is None
+
+    def test_flat_message_line_accepted(self):
+        from src.sensors.agent_sensor import parse_agent_line
+
+        line = ('{"type":"message","role":"user",'
+                '"content":[{"type":"input_text","text":"senza payload wrapper"}]}')
+        assert parse_agent_line(line, 'codex-jsonl') == 'senza payload wrapper'
+
+    def test_empty_or_missing_content_is_none(self):
+        from src.sensors.agent_sensor import parse_agent_line
+
+        assert parse_agent_line('{"type":"response_item","payload":{"type":"message"}}', 'codex-jsonl') is None
+        assert parse_agent_line(
+            '{"type":"response_item","payload":{"type":"message","content":[]}}', 'codex-jsonl'
+        ) is None
+        assert parse_agent_line(
+            '{"type":"response_item","payload":{"type":"message",'
+            '"content":[{"type":"input_text","text":"   "}]}}', 'codex-jsonl'
+        ) is None
+
+    def test_non_dict_is_none(self):
+        from src.sensors.agent_sensor import parse_agent_line
+
+        assert parse_agent_line('[1, 2, 3]', 'codex-jsonl') is None
+        assert parse_agent_line('"solo stringa"', 'codex-jsonl') is None
+
+    def test_malformed_complete_line_raises(self):
+        from src.sensors.agent_sensor import parse_agent_line
+
+        with pytest.raises(ValueError, match='MALFORMED'):
+            parse_agent_line('{"type":"response_item", rotta', 'codex-jsonl')
+
+
 class TestAgentLogTail:
     def _write(self, path: Path, text: str) -> None:
         with open(path, 'a', encoding='utf-8') as handle:
