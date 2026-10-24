@@ -71,3 +71,35 @@ uv run python scripts/evaluate.py --split test --backend real --report docs/eval
   esce con errore esplicito.
 - Reset sessione (`new-session`) e arresto eliminano lo storico temporaneo e
   i WAV live; pin/grafo/export restano.
+
+## Sorgenti live e archivio (enhancement 2026-10-25)
+
+**Principio**: il live fa emergere ricordi, non li crea. Default: le tre sorgenti
+(testo, microfono, audio di sistema) interrogano l'archivio; nulla viene scritto.
+
+```bash
+# audio di sistema (monitor PipeWire, trasparente: l'audio resta udibile)
+uv run python run_poc.py --watch-dir ./data/watch-corpus --backend real --headless \
+  --system-audio --runtime-root ./runtime
+
+# multi-log agenti: whitelist esplicita + ultima sessione automatica
+uv run python run_poc.py ... \
+  --agent-logs ~/.claude/projects/-home-maeste-project-artificial_memory/ULTIMA.jsonl:claude-jsonl \
+  --agent-logs ~/.codex/sessions/.../rollout.jsonl:codex-jsonl \
+  --auto-last --project-cwd .
+
+# ricordi di sessione (opt-in per sorgente) + trascrizione live
+uv run python run_poc.py ... --archive mic_audio,system_audio --live-transcription local \
+  --asr-model-dir ./data/models/asr
+```
+
+- **Ricordi di sessione**: badge " · sessione" nelle card, cercabili subito,
+  cancellati su Nuova sessione.
+- **Promuovi** (bottone sulle card di sessione): scrive in watch_dir il documento
+  del CONTEXTO (sessione/momente pinnato + conversazione circostante + WAV) →
+  il watcher lo indicizza come ricordo permanente. Non si promuove mai la frase nuda.
+- **Trascrizione live**: default off (audio diretto all'encoder); con `local` il
+  testo parlato cerca anch'esso e finisce in storia/export. Richiede il modello
+  predisposto (`--asr-model-dir`).
+- **Trasparenza**: la cattura dal monitor del sink NON dirotta l'audio: in una
+  call senti tutto e l'app intercetta sia la voce remota (sistema) sia la tua (mic).
