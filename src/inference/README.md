@@ -79,6 +79,23 @@ report con load/warmup/p50/p95 nearest-rank e hardware. Exit code 2 se il gate
 preliminare è applicabile e fallisce. Config attesa:
 `{"schema_version": 1, "space": {...}, "device": "auto|cpu|cuda"}`.
 
+### serve (contratto del launcher)
+
+```sh
+uv run python -m src.inference serve --config <run_dir>/config.json
+```
+
+Servizio REP di lunga durata: legge il config di bootstrap del launcher —
+passato INTEGRALMENTE ai figli (07 §6): le chiavi degli altri figli (search,
+alpha, session_*, agent_log, ...) sono accettate e ignorate; la strettezza
+riguarda i campi consumati (`space`, `paths.embed_endpoint`, verifica di
+`space_id` se presente). Binda `EmbedServer` su
+`paths.embed_endpoint` e resta vivo fino a SIGTERM/SIGINT. Load+warmup in
+thread dedicato; log su stderr (`REP in ascolto`, `modello pronto`,
+`arresto completato`). Se il caricamento fallisce: log dell'errore e
+**exit 1, mai fallback al mock**. Il launcher attende health (ready) sullo
+stesso endpoint fino a `startup_timeout_sec`.
+
 ## Test
 
 ```sh
@@ -110,3 +127,12 @@ uv run pytest src/inference -m real_model -q         # richiede i pesi in cache
   richiesta al load: segnalata per il lockfile.
 - `SemanticHashMock` non supera la Fase 1 e non attiva mai il fallback: serve
   solo a sviluppare cablaggio con DB e SpaceSpec dedicati.
+## Canale audio: voce naturale vs sintetica (2026-10-24)
+
+Il gate Fase 1 è PASS (run-3) con **voce reale**: parlato italiano naturale
+allinea bene al testo dei documenti (cos gold 0.70–0.83, 4/4, tutti i formati).
+Il parlato sintetico espeak-ng è **fuori dominio per l'encoder**: le query TTS
+mancavano i gold testuali (run-1/run-2, FAIL conservate in
+`docs/evaluation/probe-failed-run{1,2}.json`). Implicazione operativa: le
+fixture audio sintetiche non vanno usate per giudicare la qualità audio→testo
+di questo modello; il percorso microfono (voce umana) è il caso d'uso reale.
