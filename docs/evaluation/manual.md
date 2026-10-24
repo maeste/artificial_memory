@@ -17,7 +17,7 @@ Copia questa checklist in `docs/evaluation/manual.md`; per ogni voce aggiungi da
 - [ ] Cambio argomento e input audio/testo diversi mantengono suggerimenti interpretabili; registrare anche risultati indesiderati.
 - [ ] Query negativa lascia HUD vuoto; show-all DEBUG distingue la diagnostica dall'uso normale.
 - [ ] Pin A e B, tray visibile, rimozione, associazione verificata nella ricerca successiva.  <!-- 2026-10-24 PASS (dopo fix HUD): pin f01.md+f05.pdf, arco 0.25 simmetrico nel DB, embedding invariati -->
-- [ ] Apri MP4 al secondo atteso, PDF alla pagina attesa, immagine e Markdown col programma di sistema.  <!-- 2026-10-24 PASS: mpv --start=40 (finestra video), evince --page-index=2 comando verificato; click Apri funzionante dopo fix HUD -->
+- [ ] Apri MP4 al secondo atteso, PDF alla pagina attesa, immagine e Markdown col programma di sistema.  <!-- 2026-10-24 PASS: click Apri su card f01.md apre col programma di sistema (xdg-open) - utente; mpv --start=40 lanciato (finestra video); evince --page-index=2 comando verificato; click funzionanti dopo fix HUD -->
 - [ ] HUD aperto tardi recupera lo stato; reset non ripristina pin vecchi.  <!-- 2026-10-24 PARZIALE: riavvii multipli con snapshot corretto al discovery; reset non ancora provato dal vivo -->
 - [ ] Export off: audio/allegati presenti, nessun download ASR, percorso e clipboard riportati correttamente.
 - [ ] Export local: modello locale predisposto, parlato selezionato trascritto, finestra reattiva durante il lavoro.
