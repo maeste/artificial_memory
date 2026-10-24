@@ -80,7 +80,7 @@ class Launcher:
         hud = [self.python_exe, '-m', 'src.hud.app', '--runtime', self.paths.run_dir]
         if self.extra_state.get('transcription'):
             hud += ['--transcription', self.extra_state['transcription']]
-        if self.extra_state.get('transcription') == 'local' and self.extra_state.get('asr_model_dir'):
+        if self.extra_state.get('asr_model_dir'):
             hud += ['--asr-model-dir', self.extra_state['asr_model_dir']]
         children = {
             'inference': [self.python_exe, '-m', 'src.inference', 'serve'] + config,
