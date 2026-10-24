@@ -175,6 +175,8 @@ class FakePublisher:
 def card_model(item: ScoredMemory) -> dict:
     """Modello di card letto dal DTO annidato, mai da campi piatti."""
     memory = item.memory
+    session = bool(memory.session_scope)
+    badge = " · sessione" if session else ""
     return {
         "memory_id": memory.id,
         "title": memory.context_header[:120],
@@ -183,7 +185,16 @@ def card_model(item: ScoredMemory) -> dict:
         "matched": ", ".join(item.matched_sources),
         "score": f"{item.final_score:.2f}",
         "boost": item.synaptic_boost > 0,
+        "meta": f"{FORMAT_LABELS[memory.modality]} · {', '.join(item.matched_sources)} · {item.final_score:.2f}{badge}",
+        "session": session,
     }
+
+
+def card_action_label(model: dict, *, is_pinned: bool) -> str:
+    """Azione principale della card: Promuovi per le memorie di sessione."""
+    if model.get("session"):
+        return "Promuovi"
+    return "Pinnato" if is_pinned else "Pin"
 
 
 class EventsSubscriber:
@@ -281,6 +292,7 @@ class HudLogic:
         self.state = HudState()
         self.pending_commands: set[str] = set()
         self.pending_pins: dict[str, str] = {}  # command_id -> memory_id
+        self.pending_promotes: dict[str, str] = {}  # command_id -> memory_id (memorie di sessione)
         self.export_running = False
         self._demo_publisher = FakePublisher() if demo else None
         self._dirty = False
@@ -299,8 +311,12 @@ class HudLogic:
 
     # ---------------------------------------------------------------- comandi
 
-    def _send_current(self, action: str, *, memory_id=None, enabled=None):
-        """Comando sulla sessione corrente; None senza worker (demo)."""
+    def _send_current(self, action: str, *, memory_id=None, enabled=None, pending=None):
+        """Comando sulla sessione corrente; None senza worker (demo).
+
+        `pending` è il registro command_id->memory_id della famiglia (pin o
+        promozioni): serve alla UI per disabilitare i bottoni pendenti.
+        """
         if self.worker is None:
             return None
         command = HudCommand(
@@ -311,8 +327,8 @@ class HudLogic:
             enabled=enabled,
         )
         self.pending_commands.add(command.command_id)
-        if action == "pin" and memory_id:
-            self.pending_pins[command.command_id] = memory_id
+        if pending is not None and memory_id:
+            pending[command.command_id] = memory_id
         self.worker.submit(command)
         self.request_refresh()
         return command
@@ -332,10 +348,20 @@ class HudLogic:
             return None
         if memory_id in self.pending_pins.values():
             return None
-        return self._send_current("pin", memory_id=memory_id)
+        return self._send_current("pin", memory_id=memory_id, pending=self.pending_pins)
 
     def request_unpin(self, memory_id: str):
         return self._send_current("unpin", memory_id=memory_id)
+
+    def request_promote(self, memory_id: str):
+        """Promuovi una memoria di sessione: specchio di request_pin.
+
+        Azione 'promote' dai contratti F3 (commit 5075953), con registro
+        pendente separato (pending_promotes).
+        """
+        if memory_id in self.pending_promotes.values():
+            return None
+        return self._send_current("promote", memory_id=memory_id, pending=self.pending_promotes)
 
     def request_mic_toggle(self):
         mic_on = (self.state.sensor_status.get("mic") or "on") != "off"
@@ -365,8 +391,35 @@ class HudLogic:
         applied = self.state.apply_response(response)
         self.pending_commands.discard(response.command_id)
         self.pending_pins.pop(response.command_id, None)
+        self.pending_promotes.pop(response.command_id, None)
         self.request_refresh()
         return applied
+
+    def resolve_response(self, response) -> bool:
+        """Applica la risposta e notifica l'esito delle promozioni pendenti."""
+        was_promote = self.pending_promotes.get(response.command_id)
+        applied = self.handle_response(response)
+        if was_promote is not None:
+            if response.success and applied:
+                self.notify("promozione riuscita: la memoria entra nell'archivio persistente")
+            else:
+                self.notify(f"promozione non riuscita: {response.error_code or 'errore'}")
+        return applied
+
+    def notify(self, message: str):
+        """Hook UI per messaggi effimeri (toast); default silenzioso nei test."""
+        return None
+
+    def header_badges(self) -> str:
+        """Segmenti extra dell'header da sensor_status: sistema, log N."""
+        badges = ""
+        system_status = self.state.sensor_status.get("system_audio")
+        if system_status is not None:
+            badges += f" · sistema {system_status}"
+        agent_logs = self.state.sensor_status.get("agent_logs")
+        if agent_logs is not None:
+            badges += f" · log {agent_logs}"
+        return badges
 
     def poll_events(self) -> bool:
         """Applica gli eventi SUB; True se qualcosa è cambiato."""
@@ -534,11 +587,14 @@ class HudWindow(HudLogic):
         self.GLib.idle_add(self._apply_response, response)
 
     def _apply_response(self, response: ControlResponse):
-        self.handle_response(response)
+        self.resolve_response(response)
         if not response.success:
             self.show_error(f"comando non riuscito: {response.error_code}")
         self.refresh(_now())
         return False  # idle una tantum
+
+    def notify(self, message: str):
+        self.publish_toast(message)
 
     # ---------------------------------------------------------------- azioni utente
 
@@ -565,6 +621,12 @@ class HudWindow(HudLogic):
         # Unpin non cancella l'apprendimento: solo il tray si aggiorna dallo stato.
         try:
             self.request_unpin(pinned_item.memory.id)
+        except Exception as exc:
+            self.show_error(str(exc))
+
+    def _on_promote(self, _button, item: ScoredMemory):
+        try:
+            self.request_promote(item.memory.id)
         except Exception as exc:
             self.show_error(str(exc))
 
@@ -649,6 +711,7 @@ class HudWindow(HudLogic):
             agent = self.state.sensor_status.get("agent_text", "?")
             self.header_label.set_text(
                 f"backend {event.backend} · mic {mic} · agente {agent} · scarti {event.dropped_inputs}"
+                f"{self.header_badges()}"
             )
         self.mic_button.set_sensitive(self.worker is not None and self.state.session_id is not None)
         self.session_button.set_sensitive(self.worker is not None and self.state.session_id is not None)
@@ -683,7 +746,7 @@ class HudWindow(HudLogic):
         badge = " · boost grafo" if model["boost"] else ""
         card.append(
             Gtk.Label(
-                label=f"{model['format']} · {model['matched']} · score {model['score']}{badge}",
+                label=f"{model['meta']}{badge}",
                 xalign=0.0,
                 wrap=True,
             )
@@ -692,14 +755,19 @@ class HudWindow(HudLogic):
         open_button = Gtk.Button(label="Apri")
         open_button.connect("clicked", self._on_open, item)
         row.append(open_button)
-        pin_button = Gtk.Button(label="Pin")
         is_pinned = model["memory_id"] in pinned_ids
-        is_pending = model["memory_id"] in set(self.pending_pins.values())
-        pin_button.set_sensitive(not is_pinned and not is_pending)
-        if is_pinned:
-            pin_button.set_label("Pinnato")
-        pin_button.connect("clicked", self._on_pin, item)
-        row.append(pin_button)
+        action_label = card_action_label(model, is_pinned=is_pinned)
+        action_button = Gtk.Button(label=action_label)
+        if model["session"]:
+            # Promuovi: pendente per memoria, niente concetto di «già pinnato».
+            is_pending = model["memory_id"] in set(self.pending_promotes.values())
+            action_button.set_sensitive(not is_pending)
+            action_button.connect("clicked", self._on_promote, item)
+        else:
+            is_pending = model["memory_id"] in set(self.pending_pins.values())
+            action_button.set_sensitive(not is_pinned and not is_pending)
+            action_button.connect("clicked", self._on_pin, item)
+        row.append(action_button)
         card.append(row)
         return card
 

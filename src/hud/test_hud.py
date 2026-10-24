@@ -4,6 +4,7 @@ Nessuna GUI aperta: i test costruiscono argv ed eventi DTO senza eseguire
 player né mostrare finestre (mark desktop riservato ai test GNOME in H4).
 """
 
+import dataclasses
 import hashlib
 from dataclasses import replace
 
@@ -635,3 +636,91 @@ class TestToastOverlay:
         assert toast_message == ""
         assert "EXPORT_FAILED" in status_text
         assert "boom" in status_text
+
+
+# --------------------------------------------------------------------------- F3-HUD: sistema/log, sessioni, promozioni
+
+
+def session_memory(memory: MemoryView) -> MemoryView:
+    """MemoryView di sessione: il campo additivo è ormai nei contratti."""
+    return dataclasses.replace(memory, session_scope=True)
+
+
+class TestHeaderBadges:
+    def test_system_audio_and_logs_when_present(self):
+        logic, _worker = make_logic()
+        logic.state.apply_event(make_event(1))
+        assert logic.header_badges() == ""
+        logic.state.event.sensor_status["system_audio"] = "ok"
+        logic.state.event.sensor_status["agent_logs"] = "3"
+        assert logic.header_badges() == " · sistema ok · log 3"
+
+    def test_partial_when_only_one_extra_source(self):
+        logic, _worker = make_logic()
+        logic.state.apply_event(make_event(1))
+        logic.state.event.sensor_status["agent_logs"] = "7"
+        assert logic.header_badges() == " · log 7"
+
+
+class TestSessionCards:
+    def test_card_model_flags_session_scope_with_badge_and_promote(self, memory_factory):
+        model = app.card_model(make_result(session_memory(memory_factory())))
+        assert model["session"] is True
+        assert model["meta"].endswith(" · sessione")
+        assert app.card_action_label(model, is_pinned=False) == "Promuovi"
+
+    def test_regular_card_keeps_pin_and_no_badge(self, memory_factory):
+        model = app.card_model(make_result(memory_factory()))
+        assert model["session"] is False
+        assert " · sessione" not in model["meta"]
+        assert app.card_action_label(model, is_pinned=False) == "Pin"
+        assert app.card_action_label(model, is_pinned=True) == "Pinnato"
+
+
+class TestPromote:
+    def test_request_promote_sends_command_and_marks_pending(self, memory_factory):
+        memory = memory_factory()
+        logic, worker = make_logic()
+        logic.state.apply_event(make_event(1))
+        command = logic.request_promote(memory.id)
+        assert worker.commands == [command]
+        assert command.action == "promote"
+        assert command.memory_id == memory.id
+        assert memory.id in logic.pending_promotes.values()
+
+    def test_pending_promote_blocks_duplicate(self, memory_factory):
+        memory = memory_factory()
+        logic, worker = make_logic()
+        logic.state.apply_event(make_event(1))
+        assert logic.request_promote(memory.id) is not None
+        assert logic.request_promote(memory.id) is None
+        assert len(worker.commands) == 1
+
+    def test_response_toasts_promote_outcome(self, memory_factory):
+        memory = memory_factory()
+        logic, _worker = make_logic()
+        toasts: list[str] = []
+        logic.notify = toasts.append
+        logic.state.apply_event(make_event(1))
+        command = logic.request_promote(memory.id)
+        ok = make_response(make_event(2, reason="pin"), command_id=command.command_id)
+        assert logic.resolve_response(ok) is True
+        assert any("riuscita" in toast for toast in toasts)
+        assert logic.pending_promotes == {}
+        logic.state.apply_event(make_event(3))
+        command = logic.request_promote(memory.id)
+        ko = make_response(None, command_id=command.command_id, success=False)
+        assert logic.resolve_response(ko) is False
+        assert any("non riuscita" in toast for toast in toasts)
+
+    def test_pin_response_does_not_toast_promote(self, memory_factory):
+        memory = memory_factory()
+        logic, _worker = make_logic()
+        toasts: list[str] = []
+        logic.notify = toasts.append
+        logic.state.apply_event(make_event(1))
+        command = logic.request_pin(memory.id)
+        logic.resolve_response(
+            make_response(make_event(2, pinned=[make_pin(memory)], reason="pin"), command_id=command.command_id)
+        )
+        assert toasts == []

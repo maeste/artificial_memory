@@ -89,7 +89,7 @@ def make_input(
         occurred_at=occurred_at,
         text=text,
         audio_path=audio_path,
-        duration_sec=1.0 if source == "mic_audio" else None,
+        duration_sec=1.0 if source in ("mic_audio", "system_audio") else None,
     )
 
 
@@ -412,6 +412,64 @@ class TestWarningDedup:
         manifest = read_json(result, "manifest.json")
         hits = [warning for warning in manifest["warnings"] if "in-mancante" in warning]
         assert len(hits) == 1, hits
+
+
+# --------------------------------------------------------------------------- F3: system_audio
+
+
+class TestSystemAudioExport:
+    def make_history(self, tmp_path) -> list:
+        runtime = tmp_path / "runtime"
+        runtime.mkdir(parents=True, exist_ok=True)
+        write_wav(runtime / "sys.wav", level=0x30)
+        return [
+            make_input("in-a", occurred_at=BASE_TIME + 1, text="domanda"),
+            make_input(
+                "sys-in",
+                source="system_audio",
+                occurred_at=EMITTED_AT - 10,
+                audio_path=str(runtime / "sys.wav"),
+            ),
+            make_input(
+                "sys-old",
+                source="system_audio",
+                occurred_at=BASE_TIME,
+                audio_path=str(runtime / "sys.wav"),
+            ),
+        ]
+
+    def test_system_audio_selected_in_sixty_second_window(self, tmp_path, memory_factory):
+        result = do_export(tmp_path, make_state(), self.make_history(tmp_path))
+        session_context = read_json(result, "session-context.json")
+        sys_ids = [item["id"] for item in session_context["inputs"] if item["source"] == "system_audio"]
+        assert sys_ids == ["sys-in"], "solo il system_audio entro la finestra 60 s"
+
+    def test_asset_kind_is_source_and_row_is_labeled(self, tmp_path, memory_factory):
+        result = do_export(tmp_path, make_state(), self.make_history(tmp_path))
+        manifest = read_json(result, "manifest.json")
+        kinds = {attachment["kind"] for attachment in manifest["attachments"]}
+        assert "system_audio" in kinds
+        markdown = (Path(result.export_dir) / "context.md").read_text(encoding="utf-8")
+        assert "- `system_audio`" in markdown, "riga di stato etichettata per sorgente"
+
+    def test_system_audio_transcribed_in_local(self, tmp_path, memory_factory):
+        inputs = [item for item in self.make_history(tmp_path) if item.id == "sys-in"]
+        inputs.append(make_input("in-a", occurred_at=BASE_TIME + 1, text="domanda"))
+        spy = SpyTranscriber()
+        result = do_export(
+            tmp_path,
+            make_state(),
+            inputs,
+            settings=ExportSettings(transcription="local", asr_model_dir=str(tmp_path / "modello")),
+            transcriber_factory=lambda s: spy,
+        )
+        manifest = read_json(result, "manifest.json")
+        statuses = {item["key"]: item["status"] for item in manifest["transcription"]["per_input"]}
+        assert statuses.get("sys-in") == "transcribed"
+        assert (Path(result.export_dir) / "transcripts" / "sys-in.txt").is_file()
+        session_context = read_json(result, "session-context.json")
+        sys_entry = [item for item in session_context["inputs"] if item["id"] == "sys-in"][0]
+        assert sys_entry["transcription"] == "trascrizione del parlato"
 
 
 # --------------------------------------------------------------------------- markdown e budget
