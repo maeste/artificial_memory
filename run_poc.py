@@ -43,6 +43,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument('--asr-model-dir', default=None)
     parser.add_argument('--model-revision', default=None,
                         help='commit HF risolto per il backend real (o data/probe-config.json)')
+    parser.add_argument('--runtime-root', default=None,
+                        help='radice alternativa per la directory di esecuzione (default XDG_RUNTIME_DIR)')
     parser.add_argument('--transcribe-budget-sec', type=float, default=300.0)
     return parser.parse_args(argv)
 
@@ -85,7 +87,8 @@ def main(argv: list[str] | None = None) -> int:
     revision = '1' if args.backend == 'mock' else resolve_revision(args)
     space = default_space(args.backend, revision)
     run_id = new_run_id()
-    paths = make_runtime_paths(run_id, db_path, args.watch_dir, export_dir)
+    paths = make_runtime_paths(run_id, db_path, args.watch_dir, export_dir,
+                               runtime_root_override=args.runtime_root)
     config_path = Path(paths.run_dir) / 'config.json'
     config = AppConfig(space=space, paths=paths, search=build_search_settings(args, args.calibration),
                        device=args.device, mic_enabled=not args.no_mic)

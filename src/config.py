@@ -56,9 +56,11 @@ def new_run_id() -> str:
     return uuid.uuid4().hex
 
 
-def runtime_root() -> str:
+def runtime_root(override: str | None = None) -> str:
     """Radice delle directory di esecuzione, permessi 0700, senza nomi globali fissi."""
-    if os.environ.get('XDG_RUNTIME_DIR'):
+    if override:
+        root = os.path.abspath(override)
+    elif os.environ.get('XDG_RUNTIME_DIR'):
         root = os.path.join(os.environ['XDG_RUNTIME_DIR'], RUNTIME_BASENAME)
     else:
         root = os.path.join(tempfile.gettempdir(), f'{RUNTIME_BASENAME}-{os.getpid()}')
@@ -72,9 +74,10 @@ def make_runtime_paths(
     db_path: str,
     watch_dir: str,
     export_dir: str,
+    runtime_root_override: str | None = None,
 ) -> RuntimePaths:
     """Directory per esecuzione: socket, state.json e WAV live nel runtime."""
-    run_dir = os.path.join(runtime_root(), run_id)
+    run_dir = os.path.join(runtime_root(runtime_root_override), run_id)
     os.makedirs(run_dir, mode=0o700, exist_ok=True)
     os.chmod(run_dir, 0o700)
     return RuntimePaths(
