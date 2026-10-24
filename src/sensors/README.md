@@ -161,3 +161,14 @@ uv run python -m src.control --runtime "$XDG_RUNTIME_DIR/artificial-memory/<run_
 
 Verifiche eseguite in sviluppo: vedi `docs/implementation-status.md` e il
 rapporto Lince all'Orchestratore ([TASK_DONE]).
+
+
+## Limiti nota (2026-10-24, fix tail NUL/banner)
+
+- Il gate `MIN_REAL_CONTENT` (4 alfanumerici sul blocco aggregato) scarta anche
+  query genuine molto brevi (<4 caratteri): tradeoff accettato — le query live
+  realistiche sono frasi.
+- Un prompt-shell reale ("maeste@fedora:~$") ha abbastanza alfanumerici da
+  passare il gate: se il rumore-prompt tornasse a inquinare il bridge, la
+  direzione è il riconoscimento del pattern-prompt, NON l'aumento della soglia
+  (che penalizzerebbe query brevi legittime).
