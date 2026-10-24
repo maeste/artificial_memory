@@ -11,7 +11,13 @@ file ~/.claude/plans/majestic-rolling-duckling.md):
 | F3-storage | registry session_memories, purge atomica, promoted | Agent-1 | 🔧 dispatchato |
 | F3-HUD | header sistema/log N, badge sessione, Promuovi, exporter | Agent-5 | 🔧 dispatchato |
 | F4 | live transcription opzionale (default off) | Agent-4 + riusa LocalTranscriber | ⏳ dopo F3 |
-| F5 | PRD revisione non-obiettivi, preflight warn-only, docs, checklist live | Orchestrator | ⏳ |
+| F5 | PRD revisione non-obiettivi, preflight warn-only, docs, checklist live | Orchestrator | ✅ |
+| E2E | headless reale con system_audio on + auto-last + calibrazione | Orchestrator | ✅ (sensor_status {mic:off, sysaudio:on}) |
+
+**ENHANCEMENT CONSEGNATA** (branch enhancement/multi-agent-system-audio):
+tutte le fasi F1–F5 completate, integrate e verificate. Suite: 543 test
+(509 ordinari + real_model). Principio rispettato: il live fa emergere
+ricordi, non li crea; promozione del contesto con marcatore.
 
 Principi vincolanti approvati dall'utente: **il live fa emergere ricordi, non li crea**
 (default query-only; archive_sources opt-in per sorgente); ricordi di sessione cancellati
