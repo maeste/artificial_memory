@@ -309,6 +309,72 @@ def test_pin_without_memory_id_is_rejected():
         decode_hud_command(pack('hud.command', cmd))
 
 
+def test_promote_roundtrip_and_validation():
+    cmd = HudCommand(command_id='c1', session_id='sess-1', action='promote', memory_id='m1')
+    assert decode_hud_command(pack('hud.command', cmd)) == cmd
+
+
+def test_promote_requires_memory_id():
+    cmd = HudCommand(command_id='c1', session_id='sess-1', action='promote')
+    with pytest.raises(ValueError, match='INVALID_REQUEST'):
+        decode_hud_command(pack('hud.command', cmd))
+
+
+def test_promote_forbids_enabled():
+    payload = {'command_id': 'c1', 'session_id': 's', 'action': 'promote', 'memory_id': 'm1',
+               'enabled': True}
+    with pytest.raises(ValueError, match='INVALID_REQUEST'):
+        decode_hud_command(json.dumps({'schema_version': 1, 'type': 'hud.command', 'payload': payload}))
+
+
+def test_system_audio_input_roundtrip():
+    inp = LiveInput(id='in-sys', session_id='s', source='system_audio',
+                    occurred_at=1.0, audio_path='/abs/sys.wav', duration_sec=2.0)
+    state = LiveStateEvent(
+        event_id='e', sequence=1, session_id='s', space_id='x', backend='mock', emitted_at=1.0,
+        reason='input', latest_inputs=[inp], results=[], pinned=[], sensor_status={'system_audio': 'on'},
+        source_last_seen={'system_audio': 1.0}, dropped_inputs=0,
+    )
+    decoded = decode_live_state(pack('live.state', state))
+    assert decoded.latest_inputs[0].source == 'system_audio'
+
+
+def test_system_audio_without_audio_path_is_rejected():
+    payload = {'id': 'in', 'session_id': 's', 'source': 'system_audio', 'occurred_at': 1.0}
+    raw = json.dumps({'schema_version': 1, 'type': 'live.state',
+                      'payload': {'event_id': 'e', 'sequence': 1, 'session_id': 's', 'space_id': 'x',
+                                  'backend': 'mock', 'emitted_at': 1.0, 'reason': 'input',
+                                  'latest_inputs': [payload], 'results': [], 'pinned': [],
+                                  'sensor_status': {}, 'dropped_inputs': 0}})
+    with pytest.raises(ValueError, match='system_audio'):
+        decode_live_state(raw)
+
+
+def test_memory_view_session_scope_roundtrip(memory_view):
+    scoped = dataclasses.replace(memory_view, session_scope=True)
+    state = LiveStateEvent(
+        event_id='e', sequence=1, session_id='s', space_id='x', backend='mock', emitted_at=1.0,
+        reason='input', latest_inputs=[], results=[ScoredMemory(memory=scoped, cosine_score=0.5,
+                                                               z_score=0.5, synaptic_boost=0.0,
+                                                               final_score=0.5)], pinned=[],
+        sensor_status={}, dropped_inputs=0,
+    )
+    decoded = decode_live_state(pack('live.state', state))
+    assert decoded.results[0].memory.session_scope is True
+
+
+def test_memory_view_session_scope_defaults_false(memory_view):
+    state = LiveStateEvent(
+        event_id='e', sequence=1, session_id='s', space_id='x', backend='mock', emitted_at=1.0,
+        reason='input', latest_inputs=[], results=[ScoredMemory(memory=memory_view, cosine_score=0.5,
+                                                               z_score=0.5, synaptic_boost=0.0,
+                                                               final_score=0.5)], pinned=[],
+        sensor_status={}, dropped_inputs=0,
+    )
+    decoded = decode_live_state(pack('live.state', state))
+    assert decoded.results[0].memory.session_scope is False
+
+
 def test_set_mic_without_enabled_is_rejected():
     cmd = HudCommand(command_id='c1', session_id='sess-1', action='set_mic')
     with pytest.raises(ValueError, match='INVALID_REQUEST'):

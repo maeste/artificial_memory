@@ -22,12 +22,13 @@ from typing import Literal
 SCHEMA_VERSION = 1
 EMBED_DIM = 256
 
-Source = Literal['agent_text', 'mic_audio']
-Modality = Literal['markdown', 'pdf', 'image', 'video']
+Source = Literal['agent_text', 'mic_audio', 'system_audio']
+Modality = Literal['markdown', 'pdf', 'image', 'video', 'audio']
 Backend = Literal['real', 'mock']
 
-SOURCE_VALUES = frozenset({'agent_text', 'mic_audio'})
-MODALITY_VALUES = frozenset({'markdown', 'pdf', 'image', 'video'})
+SOURCE_VALUES = frozenset({'agent_text', 'mic_audio', 'system_audio'})
+AUDIO_SOURCES = frozenset({'mic_audio', 'system_audio'})
+MODALITY_VALUES = frozenset({'markdown', 'pdf', 'image', 'video', 'audio'})
 BACKEND_VALUES = frozenset({'real', 'mock'})
 
 # Limiti wire espliciti (i token del testo sono verificati dal backend col tokenizer).
@@ -117,6 +118,7 @@ class MemoryView:
     start_sec: float | None = None
     end_sec: float | None = None
     created_at: float = 0.0
+    session_scope: bool = False
 
 
 @dataclass(frozen=True)
@@ -183,7 +185,7 @@ class LiveStateEvent:
 class HudCommand:
     command_id: str
     session_id: str | None
-    action: Literal['pin', 'unpin', 'snapshot', 'new_session', 'set_mic']
+    action: Literal['pin', 'unpin', 'snapshot', 'new_session', 'set_mic', 'promote']
     memory_id: str | None = None
     enabled: bool | None = None
 
@@ -428,6 +430,7 @@ def _decode_memory_view(payload) -> MemoryView:
         start_sec=start_sec,
         end_sec=end_sec,
         created_at=_as_float(payload.get('created_at', 0.0), 'memory.created_at'),
+        session_scope=_as_bool(payload.get('session_scope', False), 'memory.session_scope'),
     )
 
 
@@ -475,8 +478,8 @@ def _decode_live_input(payload) -> LiveInput:
     duration_sec = None if duration_raw is None else _as_float(duration_raw, 'duration_sec')
     if duration_sec is not None and duration_sec < 0:
         raise ValueError(f'INVALID_REQUEST: duration_sec negativa: {duration_sec}')
-    if source == 'mic_audio' and audio_path is None:
-        raise ValueError('INVALID_REQUEST: input mic_audio senza audio_path')
+    if source in AUDIO_SOURCES and audio_path is None:
+        raise ValueError(f'INVALID_REQUEST: input {source} senza audio_path')
     if source == 'agent_text' and not text:
         raise ValueError('INVALID_REQUEST: input agent_text senza testo')
     return LiveInput(
@@ -618,7 +621,8 @@ def decode_hud_command(raw: str) -> HudCommand:
     payload = unpack(raw, 'hud.command')
     _check_keys(payload, {f.name for f in fields(HudCommand)})
     action = _as_literal(
-        payload['action'], frozenset({'pin', 'unpin', 'snapshot', 'new_session', 'set_mic'}), 'action'
+        payload['action'],
+        frozenset({'pin', 'unpin', 'snapshot', 'new_session', 'set_mic', 'promote'}), 'action'
     )
     session_raw = _optional(payload, 'session_id')
     session_id = None if session_raw is None else _as_nonempty_str(session_raw, 'session_id')
@@ -626,13 +630,13 @@ def decode_hud_command(raw: str) -> HudCommand:
     memory_id = None if memory_raw is None else _as_nonempty_str(memory_raw, 'memory_id')
     enabled_raw = _optional(payload, 'enabled')
     enabled = None if enabled_raw is None else _as_bool(enabled_raw, 'enabled')
-    if action in ('pin', 'unpin') and memory_id is None:
+    if action in ('pin', 'unpin', 'promote') and memory_id is None:
         raise ValueError(f'INVALID_REQUEST: {action} richiede memory_id')
     if action == 'set_mic' and enabled is None:
         raise ValueError('INVALID_REQUEST: set_mic richiede enabled')
     if action != 'snapshot' and session_id is None:
         raise ValueError(f'INVALID_REQUEST: {action} richiede session_id (solo snapshot accetta None)')
-    if action not in ('pin', 'unpin') and memory_id is not None:
+    if action not in ('pin', 'unpin', 'promote') and memory_id is not None:
         raise ValueError(f'INVALID_REQUEST: memory_id non ammesso per {action}')
     if action != 'set_mic' and enabled is not None:
         raise ValueError(f'INVALID_REQUEST: enabled non ammesso per {action}')
