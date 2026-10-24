@@ -544,6 +544,20 @@ class TestAgentLogTail:
         live = tail.poll()
         assert live is not None and live.text == 'una\ndue'
 
+    def test_null_and_banner_block_is_discarded(self, tmp_path):
+        """Regressione 2026-10-24: un blocco PTY di NUL/banner non è una query."""
+        log = tmp_path / 'session.log'
+        clock = FakeClock()
+        tail = self._tail(log, clock)
+        junk = 'bob\x1b[K\x08\x08\x1b[K\x07' + '\x00' * 409 + '\n'
+        self._write(log, junk)
+        clock.advance(1.1)
+        assert tail.poll() is None  # blocco senza contenuto reale: scartato
+        self._write(log, 'Quanto durano i risultati nella cache?\n')
+        clock.advance(1.1)
+        live = tail.poll()
+        assert live is not None and 'Quanto durano' in live.text
+
     def test_stable_block_not_resent(self, tmp_path):
         log = tmp_path / 'session.log'
         clock = FakeClock()

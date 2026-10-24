@@ -20,12 +20,21 @@ FORMATS = ('plain', 'claude-jsonl')
 
 ANSI_CSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
 ANSI_OSC = re.compile(r'\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)')
+MIN_REAL_CONTENT = 4
 
 
 def _clean_plain(text: str) -> str | None:
-    """Rimuove ANSI CSI/OSC, backspace e carriage-return da repaint; None se vuoto."""
+    """Rimuove ANSI CSI/OSC, backspace, carriage-return e NUL da repaint; None se vuoto.
+
+    Il controllo di contenuto reale (MIN_REAL_CONTENT) è applicato sul BLOCCO
+    aggregato in poll(), non sulla riga: righe corte legittime ('una') devono
+    potersi sommare a blocchi utili, mentre un blocco di soli NUL/banner della
+    shell viene scartato (fix sessione manuale 2026-10-24: 409 NUL emessi come
+    LiveInput dal bridge PTY).
+    """
     text = ANSI_OSC.sub('', text)
     text = ANSI_CSI.sub('', text)
+    text = text.replace('\x00', '')
     chars: list[str] = []
     for ch in text:
         if ch == '\b':
@@ -138,6 +147,8 @@ class AgentLogTail:
         self._last_emit = now
         if not text or text == self._last_text:
             return None  # stesso blocco stabile: non rinviato (piano L2)
+        if sum(1 for ch in text if ch.isalnum()) < MIN_REAL_CONTENT:
+            return None  # blocco senza contenuto reale: banner/NUL/editing del PTY
         self._last_text = text
         return LiveInput(
             id=uuid.uuid4().hex,
