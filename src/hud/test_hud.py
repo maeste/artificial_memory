@@ -13,6 +13,7 @@ from src.config import DEFAULT_SOURCE_TTL_SEC
 from src.contracts import (
     ContextSnapshot,
     ControlResponse,
+    ExportSettings,
     HudCommand,
     LiveInput,
     LiveStateEvent,
@@ -471,3 +472,118 @@ class TestControlWorker:
             worker.stop()
         assert responses[0].success is False
         assert responses[0].error_code == "CONTROL_ERROR"
+
+
+# --------------------------------------------------------------------------- fix flash: click -> comando
+
+
+class RecordingWorker:
+    def __init__(self):
+        self.commands: list[HudCommand] = []
+
+    def submit(self, command):
+        self.commands.append(command)
+
+
+class StubSubscriber:
+    def __init__(self, events):
+        self.events = list(events)
+
+    def poll(self):
+        found, self.events = self.events, []
+        return found
+
+
+def make_logic(**overrides):
+    worker = RecordingWorker()
+    defaults = dict(settings=ExportSettings(), worker=worker, open_file=lambda memory: None)
+    logic = app.HudLogic(**{**defaults, **overrides})
+    return logic, worker
+
+
+class TestClickToCommand:
+    def test_pin_builds_command_with_current_session_and_marks_pending(self, memory_factory):
+        memory = memory_factory()
+        logic, worker = make_logic()
+        logic.state.apply_event(make_event(1))
+        command = logic.request_pin(memory.id)
+        assert worker.commands == [command]
+        assert command.action == "pin"
+        assert command.session_id == "s1"
+        assert command.memory_id == memory.id
+        assert memory.id in logic.pending_pins.values()
+
+    def test_pin_skipped_when_already_pinned(self, memory_factory):
+        memory = memory_factory()
+        logic, worker = make_logic()
+        logic.state.apply_event(make_event(1, pinned=[make_pin(memory)], reason="pin"))
+        assert logic.request_pin(memory.id) is None
+        assert worker.commands == []
+
+    def test_pin_skipped_while_pending(self, memory_factory):
+        memory = memory_factory()
+        logic, worker = make_logic()
+        logic.state.apply_event(make_event(1))
+        first = logic.request_pin(memory.id)
+        assert first is not None
+        assert logic.request_pin(memory.id) is None, "doppio click: un solo comando"
+        assert len(worker.commands) == 1
+
+    def test_response_clears_pending_pin_marker(self, memory_factory):
+        memory = memory_factory()
+        logic, _worker = make_logic()
+        logic.state.apply_event(make_event(1))
+        command = logic.request_pin(memory.id)
+        response = make_response(make_event(2, pinned=[make_pin(memory)], reason="pin"), command_id=command.command_id)
+        assert logic.handle_response(response) is True
+        assert logic.pending_pins == {}, "il marker pendente si rilascia alla conferma"
+        assert logic.request_pin(memory.id) is None, "ora risulta pinnato nello stato"
+
+    def test_mic_toggle_reads_sensor_status(self):
+        logic, worker = make_logic()
+        logic.state.apply_event(make_event(1))  # sensor_status senza 'mic': on -> off
+        command = logic.request_mic_toggle()
+        assert command.action == "set_mic"
+        assert command.enabled is False
+        logic.state.apply_event(make_event(2, pinned=[], reason="status"))
+        logic.state.event.sensor_status["mic"] = "off"
+        command = logic.request_mic_toggle()
+        assert command.enabled is True
+
+    def test_open_missing_file_propagates_for_visible_error(self, tmp_path, memory_factory):
+        logic, _worker = make_logic(open_file=None)  # apri il vero openers
+        memory = memory_factory(file_path=str(tmp_path / "assente.md"))
+        import pytest as _pytest
+
+        with _pytest.raises(FileNotFoundError):
+            logic.request_open(memory)
+
+    def test_demo_without_worker_sends_nothing(self, memory_factory):
+        logic = app.HudLogic(settings=ExportSettings(), worker=None)
+        assert logic.request_pin("x") is None
+        assert logic.request_unpin("x") is None
+        assert logic.request_mic_toggle() is None
+        assert logic.request_new_session() is None
+        assert logic.start_discovery() is None
+
+
+class TestTickRebuildsOnlyOnChange:
+    def test_poll_events_reports_only_new_events(self):
+        logic, _worker = make_logic(subscriber=StubSubscriber([make_event(1)]))
+        assert logic.poll_events() is True
+        assert logic.poll_events() is False, "nessun rebuild senza eventi nuovi"
+        logic.subscriber = StubSubscriber([make_event(0)])
+        assert logic.poll_events() is False, "evento vecchio scartato: niente rebuild"
+
+    def test_view_signature_changes_only_on_real_change(self, memory_factory):
+        memory = memory_factory()
+        logic, _worker = make_logic()
+        logic.state.apply_event(make_event(0, results=[make_result(memory)], source_last_seen={"agent_text": 1000.0}))
+        assert logic.view_signature_changed(1005.0) is True, "prima osservazione: rebuild"
+        assert logic.view_signature_changed(1005.0) is False, "niente rebuild a tick invariato"
+        assert logic.view_signature_changed(1005.0 + DEFAULT_SOURCE_TTL_SEC + 1.0) is True, "card scaduta: rebuild"
+
+    def test_discovery_uses_null_session(self):
+        logic, worker = make_logic()
+        command = logic.start_discovery()
+        assert command.session_id is None and command.action == "snapshot"

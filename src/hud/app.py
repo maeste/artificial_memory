@@ -259,6 +259,132 @@ class ControlWorker:
         self._queue.put(None)
 
 
+def _default_open_file(memory):
+    from src.hud import openers
+
+    openers.open_memory_file(memory)
+
+
+class HudLogic:
+    """Percorso click->comando senza widget, testabile headless (fix flash H4).
+
+    Gli handler GTK delegano qui: nessuna chiamata a GLib/GTK e nessun
+    rebuild sincrono dentro un handler. La UI si ricostruisce solo su
+    cambiamento reale (evento applicato, risposta controllo, scadenza di
+    visibilità), mai a tempo: ricostruire la lista ogni 100 ms distrugge i
+    bottoni fra press e release e il segnale «clicked» non arriva mai.
+    """
+
+    def __init__(self, *, settings, endpoints=None, worker=None, subscriber=None, demo=False, open_file=None):
+        self.settings = settings
+        self.demo = demo
+        self.state = HudState()
+        self.pending_commands: set[str] = set()
+        self.pending_pins: dict[str, str] = {}  # command_id -> memory_id
+        self.export_running = False
+        self._demo_publisher = FakePublisher() if demo else None
+        self._dirty = False
+        self._view_signature = None
+        self.open_file = open_file or _default_open_file
+        if subscriber is not None:
+            self.subscriber = subscriber
+        else:
+            self.subscriber = EventsSubscriber(endpoints["events"]) if endpoints else None
+        if worker is not None:
+            self.worker = worker
+        elif endpoints is not None:
+            self.worker = ControlWorker(endpoints["control"], self._on_worker_response)
+        else:
+            self.worker = None
+
+    # ---------------------------------------------------------------- comandi
+
+    def _send_current(self, action: str, *, memory_id=None, enabled=None):
+        """Comando sulla sessione corrente; None senza worker (demo)."""
+        if self.worker is None:
+            return None
+        command = HudCommand(
+            command_id=uuid.uuid4().hex,
+            session_id=self.state.session_id,
+            action=action,
+            memory_id=memory_id,
+            enabled=enabled,
+        )
+        self.pending_commands.add(command.command_id)
+        if action == "pin" and memory_id:
+            self.pending_pins[command.command_id] = memory_id
+        self.worker.submit(command)
+        self.request_refresh()
+        return command
+
+    def start_discovery(self):
+        """Snapshot di discovery: unico comando che accetta session_id None."""
+        if self.worker is None:
+            return None
+        command = HudCommand(command_id=uuid.uuid4().hex, session_id=None, action="snapshot")
+        self.pending_commands.add(command.command_id)
+        self.worker.submit(command)
+        self.request_refresh()
+        return command
+
+    def request_pin(self, memory_id: str):
+        if memory_id in {p.memory.id for p in self.state.pinned}:
+            return None
+        if memory_id in self.pending_pins.values():
+            return None
+        return self._send_current("pin", memory_id=memory_id)
+
+    def request_unpin(self, memory_id: str):
+        return self._send_current("unpin", memory_id=memory_id)
+
+    def request_mic_toggle(self):
+        mic_on = (self.state.sensor_status.get("mic") or "on") != "off"
+        return self._send_current("set_mic", enabled=not mic_on)
+
+    def request_new_session(self):
+        return self._send_current("new_session")
+
+    def request_open(self, memory):
+        self.open_file(memory)
+
+    # ---------------------------------------------------------------- risposte ed eventi
+
+    def _on_worker_response(self, response):
+        """Hook del worker (thread controllo): la UI lo incarta in GLib.idle_add."""
+        self.handle_response(response)
+
+    def handle_response(self, response) -> bool:
+        applied = self.state.apply_response(response)
+        self.pending_commands.discard(response.command_id)
+        self.pending_pins.pop(response.command_id, None)
+        self.request_refresh()
+        return applied
+
+    def poll_events(self) -> bool:
+        """Applica gli eventi SUB; True se qualcosa è cambiato."""
+        if self.subscriber is None:
+            return False
+        changed = False
+        for event in self.subscriber.poll():
+            changed |= self.state.apply_event(event)
+        return changed
+
+    def view_signature_changed(self, now: float) -> bool:
+        """True quando lista visibile o status cambiano (scadenze TTL comprese)."""
+        signature = (
+            self.state.status(now),
+            tuple(item.memory.id for item in self.state.visible_results(now)),
+        )
+        if signature != self._view_signature:
+            self._view_signature = signature
+            return True
+        return False
+
+    def request_refresh(self):
+        """Hook UI: default solo flag, la finestra lo mappa su un rebuild differito."""
+        self._dirty = True
+
+
 # --------------------------------------------------------------------------- H4: UI GTK (solo desktop)
 
 
@@ -273,26 +399,18 @@ def _load_gi():
     return Adw, GLib, Gtk
 
 
-class HudWindow:
+class HudWindow(HudLogic):
     """Finestra Adw (~380x720): header di stato, card live, tray pin, controlli.
 
     Il SUB è pollato dal timeout GLib sul thread GTK; il controllo e l'export
-    girano su worker con callback rientranti via GLib.idle_add. Nessun
-    aggiornamento ottimistico: la UI si ricostruisce solo dallo stato
-    applicato (HudState) più l'insieme locale dei comandi pendenti.
+    girano su worker con callback rientranti via GLib.idle_add. La UI non si
+    ricostruisce mai a tempo né dentro un handler: solo su cambiamento
+    applicato, così i click non cadono su widget distrutti (fix flash).
     """
 
     def __init__(self, Adw, GLib, Gtk, *, endpoints=None, settings, demo=False):
+        super().__init__(settings=settings, endpoints=endpoints, demo=demo)
         self.Adw, self.GLib, self.Gtk = Adw, GLib, Gtk
-        self.settings = settings
-        self.demo = demo
-        self.state = HudState()
-        self.pending_commands: set[str] = set()
-        self.export_running = False
-        self.openers_warning = None
-        self._demo_publisher = FakePublisher() if demo else None
-        self.subscriber = EventsSubscriber(endpoints["events"]) if endpoints else None
-        self.worker = ControlWorker(endpoints["control"], self._on_worker_response) if endpoints else None
         self._build_window()
 
     # ---------------------------------------------------------------- costruzione UI
@@ -362,18 +480,23 @@ class HudWindow:
             self.GLib.timeout_add(1500, self._on_demo_tick)
         if self.subscriber is not None:
             self.GLib.timeout_add(SUB_POLL_MS, self._on_sub_tick)
-        self.send_control("snapshot", session_id=None)  # discovery senza sessione
+        self.start_discovery()  # snapshot senza sessione
+
+    def request_refresh(self):
+        """Rebuild differito: mai dentro il handler che sta gestendo il click."""
+        self.GLib.idle_add(self.refresh, _now())
 
     def _on_sub_tick(self):
         now = _now()
-        for event in self.subscriber.poll():
-            self.state.apply_event(event)
-        self.refresh(now)
+        changed = self.poll_events()
+        if changed or self._dirty or self.view_signature_changed(now):
+            self._dirty = False
+            self.refresh(now)
         return True  # continua il timeout
 
     def _on_demo_tick(self):
-        self.state.apply_event(self._demo_publisher.next_event())
-        self.refresh(_now())
+        if self.state.apply_event(self._demo_publisher.next_event()):
+            self.refresh(_now())
         return True
 
     def _on_worker_response(self, response: ControlResponse):
@@ -381,52 +504,43 @@ class HudWindow:
         self.GLib.idle_add(self._apply_response, response)
 
     def _apply_response(self, response: ControlResponse):
-        self.state.apply_response(response)
-        if response.command_id in self.pending_commands:
-            self.pending_commands.discard(response.command_id)
+        self.handle_response(response)
         if not response.success:
             self.show_error(f"comando non riuscito: {response.error_code}")
         self.refresh(_now())
         return False  # idle una tantum
 
-    def send_control(self, action: str, *, session_id=None, memory_id=None, enabled=None):
-        if self.worker is None:
-            return
-        command = HudCommand(
-            command_id=uuid.uuid4().hex,
-            session_id=session_id,
-            action=action,
-            memory_id=memory_id,
-            enabled=enabled,
-        )
-        self.pending_commands.add(command.command_id)
-        self.worker.submit(command)
-        self.refresh(_now())
-
     # ---------------------------------------------------------------- azioni utente
 
     def _on_mic_toggle(self, _button):
-        current = (self.state.sensor_status.get("mic") or "on") != "off"
-        self.send_control("set_mic", session_id=self.state.session_id, enabled=not current)
+        try:
+            self.request_mic_toggle()
+        except Exception as exc:  # nessun handler deve morire in silenzio
+            self.show_error(str(exc))
 
     def _on_new_session(self, _button):
         # Nuova sessione: la storia temporanea riparte da zero; pin e export restano.
-        self.send_control("new_session", session_id=self.state.session_id)
+        try:
+            self.request_new_session()
+        except Exception as exc:
+            self.show_error(str(exc))
 
     def _on_pin(self, _button, item: ScoredMemory):
-        if item.memory.id in {p.memory.id for p in self.state.pinned}:
-            return
-        self.send_control("pin", session_id=self.state.session_id, memory_id=item.memory.id)
+        try:
+            self.request_pin(item.memory.id)
+        except Exception as exc:
+            self.show_error(str(exc))
 
     def _on_unpin(self, _button, pinned_item):
         # Unpin non cancella l'apprendimento: solo il tray si aggiorna dallo stato.
-        self.send_control("unpin", session_id=self.state.session_id, memory_id=pinned_item.memory.id)
+        try:
+            self.request_unpin(pinned_item.memory.id)
+        except Exception as exc:
+            self.show_error(str(exc))
 
     def _on_open(self, _button, item: ScoredMemory):
-        from src.hud import openers
-
         try:
-            openers.open_memory_file(item.memory)
+            self.request_open(item.memory)
         except (FileNotFoundError, RuntimeError, OSError) as exc:
             self.show_error(str(exc))
 
@@ -552,7 +666,7 @@ class HudWindow:
         row.append(open_button)
         pin_button = Gtk.Button(label="Pin")
         is_pinned = model["memory_id"] in pinned_ids
-        is_pending = bool(self.pending_commands)
+        is_pending = model["memory_id"] in set(self.pending_pins.values())
         pin_button.set_sensitive(not is_pinned and not is_pending)
         if is_pinned:
             pin_button.set_label("Pinnato")
