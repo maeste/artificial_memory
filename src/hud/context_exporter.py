@@ -93,8 +93,8 @@ def _select_inputs(state: LiveStateEvent, session_inputs: list[LiveInput]) -> tu
         for input_id in pin.snapshot.input_ids:
             if input_id in by_id:
                 selected_ids.add(input_id)
-            else:
-                missing.append(input_id)
+            elif input_id not in missing:
+                missing.append(input_id)  # ordine preservato, senza duplicati fra pin
     ordered = [item for item in session_inputs if item.id in selected_ids]
     return ordered, missing
 
@@ -431,8 +431,12 @@ def _build_markdown(
     suggestion_lines = ["## Altri suggerimenti"]
     if suggestions:
         for scored in suggestions:
-            rel = f"memories/{scored.memory.id}.txt"
-            suggestion_lines.append(f"- [{scored.memory.context_header[:TITLE_MAX_CHARS]}]({rel}) — solo riferimento")
+            # Solo riferimento bibliografico: il file non è nel pacchetto, quindi
+            # nessun link (un allegato indisponibile è voce di stato, non link rotto).
+            suggestion_lines.append(
+                f"- {scored.memory.context_header[:TITLE_MAX_CHARS]} · {scored.memory.modality}"
+                " — solo riferimento, non incluso nel pacchetto"
+            )
     else:
         suggestion_lines.append("_Nessun altro suggerimento._")
     add_block("\n".join(suggestion_lines), "altri suggerimenti")
@@ -708,6 +712,10 @@ def _verify_package(staging: Path, manifest: dict) -> None:
         for rel in paths:
             if not (staging / rel).is_file():
                 raise ExportFailedError(f"EXPORT_FAILED: riferimento rotto {rel}")
+    markdown = (staging / "context.md").read_text(encoding="utf-8")
+    for target in set(re.findall(r"\]\(([^)]+)\)", markdown)):
+        if not (staging / target).is_file():
+            raise ExportFailedError(f"EXPORT_FAILED: link rotto nel contesto: {target}")
 
 
 def assemble_and_export_context(
@@ -804,6 +812,15 @@ def _assemble_once(
         suggestions = [scored for scored in state.results if scored.memory.id not in pinned_ids][
             :MAX_OTHER_SUGGESTIONS
         ]
+        suggestions_record = [
+            {
+                "memory_id": scored.memory.id,
+                "title": scored.memory.context_header[:TITLE_MAX_CHARS],
+                "source_path": scored.memory.file_path,
+                "modality": scored.memory.modality,
+            }
+            for scored in suggestions
+        ]
         markdown, omissions = _build_markdown(
             backend=state.backend,
             session_id=state.session_id,
@@ -873,6 +890,7 @@ def _assemble_once(
             },
             "inputs": session_context["inputs"],
             "pinned": pin_entries,
+            "suggestions": suggestions_record,
             "memory_map": memory_map,
             "attachments": attachments,
             "transcription": transcription,

@@ -8,6 +8,7 @@ sorgente cambiata, deduplica e budget. Nessuna GUI e nessuna rete.
 import hashlib
 import json
 import os
+import re
 import shutil
 import uuid
 import wave
@@ -346,7 +347,10 @@ class TestPinnedContent:
         markdown = (Path(result.export_dir) / "context.md").read_text(encoding="utf-8")
         suggestions_section = markdown.split("## Altri suggerimenti")[-1]
         assert "pinnato" not in suggestions_section
-        assert suggestions_section.count("- [") == 3  # massimo tre, solo riferimenti
+        suggestion_lines = [line for line in suggestions_section.splitlines() if line.startswith("- ")]
+        assert len(suggestion_lines) == 3  # massimo tre, solo riferimenti
+        assert "altro 3" not in suggestions_section
+        assert "](memories/" not in suggestions_section, "suggerimenti: riferimenti senza link a file assenti"
 
 
 def make_suggestion(memory: MemoryView) -> ScoredMemory:
@@ -359,6 +363,55 @@ def make_suggestion(memory: MemoryView) -> ScoredMemory:
         matched_sources=["agent_text"],
         winning_source="agent_text",
     )
+
+
+# --------------------------------------------------------------------------- link e warning
+
+
+class TestSuggestionsAndLinks:
+    def test_suggestions_are_plain_references_without_files(self, tmp_path, memory_factory, history_factory):
+        others = [
+            memory_factory(
+                file_path=f"/tmp/sugg{i}.md",
+                content_text=f"suggerimento {i}",
+                context_header=f"sugg{i}.md > Suggerimento {i}",
+            )
+            for i in range(3)
+        ]
+        results = [make_suggestion(memory) for memory in others]
+        result = do_export(tmp_path, make_state(results=results), history_factory())
+        package = Path(result.export_dir)
+        markdown = (package / "context.md").read_text(encoding="utf-8")
+        assert "Suggerimento 0" in markdown
+        assert "](memories/" not in markdown.split("## Altri suggerimenti")[-1]
+        for memory in others:
+            assert not (package / "memories" / f"{memory.id}.txt").exists()
+        manifest = read_json(result, "manifest.json")
+        listed = {entry["memory_id"]: entry for entry in manifest["suggestions"]}
+        assert set(listed) == {memory.id for memory in others}
+        assert listed[others[0].id]["source_path"] == "/tmp/sugg0.md"
+
+    def test_every_markdown_link_resolves_in_package(self, tmp_path, memory_factory, history_factory, sample_video):
+        pin = video_pin(tmp_path, memory_factory, sample_video, ["in-1"])
+        others = [memory_factory(file_path=f"/tmp/x{i}.md", content_text=f"x {i}") for i in range(2)]
+        state = make_state(pinned=[pin], results=[make_suggestion(memory) for memory in others])
+        result = do_export(tmp_path, state, history_factory())
+        package = Path(result.export_dir)
+        markdown = (package / "context.md").read_text(encoding="utf-8")
+        targets = set(re.findall(r"\]\(([^)]+)\)", markdown))
+        assert targets, "attesi link nel contesto"
+        for target in targets:
+            assert (package / target).is_file(), f"link rotto: {target}"
+
+
+class TestWarningDedup:
+    def test_missing_pin_inputs_reported_once(self, tmp_path, memory_factory, history_factory):
+        pin_a = make_pin(memory_factory(file_path="/tmp/a.md"), ["in-mancante"])
+        pin_b = make_pin(memory_factory(file_path="/tmp/b.md"), ["in-mancante", "in-1"])
+        result = do_export(tmp_path, make_state(pinned=[pin_a, pin_b]), history_factory())
+        manifest = read_json(result, "manifest.json")
+        hits = [warning for warning in manifest["warnings"] if "in-mancante" in warning]
+        assert len(hits) == 1, hits
 
 
 # --------------------------------------------------------------------------- markdown e budget
