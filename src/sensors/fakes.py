@@ -91,6 +91,11 @@ class FakeStorage:
         self.fail_on_search: Exception | None = None
         self.fail_on_reinforce: Exception | None = None
         self.index_gen = 0
+        # API sessioni (F3): registro memory_id → {'session_id', 'file_path', 'promoted'}
+        self.session_registry: dict[str, dict] = {}
+        self.fail_on_replace: Exception | None = None
+        self.fail_on_register: Exception | None = None
+        self.fail_on_purge: Exception | None = None
 
     def add(self, memory: MemoryView, embedding: list[float]) -> None:
         self.records[memory.id] = (memory, unit(embedding))
@@ -132,6 +137,57 @@ class FakeStorage:
 
     def file_hash(self, file_path: str) -> str | None:
         return None
+
+    def replace_file(self, file_path: str, file_sha256: str, records) -> None:
+        """Sostituzione fake: i record entrano nel registro con il loro vettore."""
+        if self.fail_on_replace is not None:
+            raise self.fail_on_replace
+        for record in records:
+            self.records[record.memory.id] = (record.memory, unit(record.embedding))
+
+    def register_session_memories(self, session_id: str, entries) -> None:
+        """Registro fake: idempotente per sessione, conflitto fra sessioni."""
+        if self.fail_on_register is not None:
+            raise self.fail_on_register
+        for memory_id, file_path in entries:
+            existing = self.session_registry.get(memory_id)
+            if existing is not None:
+                if existing['session_id'] != session_id:
+                    raise ValueError(f'SESSION_MEMORY_CONFLICT: {memory_id} di altra sessione')
+                continue
+            if memory_id not in self.records:
+                raise ValueError(f'MEMORY_NOT_FOUND: {memory_id} non indicizzato')
+            self.session_registry[memory_id] = {
+                'session_id': session_id, 'file_path': file_path, 'promoted': False,
+            }
+
+    def mark_session_memory_promoted(self, memory_id: str) -> bool:
+        entry = self.session_registry.get(memory_id)
+        if entry is None or entry['promoted']:
+            return False
+        entry['promoted'] = True
+        return True
+
+    def get_session_memory(self, memory_id: str) -> dict | None:
+        entry = self.session_registry.get(memory_id)
+        if entry is None:
+            return None
+        return {'session_id': entry['session_id'], 'promoted': entry['promoted']}
+
+    def purge_session_memories(self, session_id: str) -> int:
+        """Rimozione fake: ricordi della sessione fuori da registro e archivio."""
+        if self.fail_on_purge is not None:
+            raise self.fail_on_purge
+        ids = [
+            memory_id for memory_id, entry in self.session_registry.items()
+            if entry['session_id'] == session_id
+        ]
+        for memory_id in ids:
+            self.session_registry.pop(memory_id, None)
+            self.records.pop(memory_id, None)
+        if ids:
+            self.index_gen += 1
+        return len(ids)
 
     def close(self) -> None:
         return None

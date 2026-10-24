@@ -11,10 +11,12 @@ import numpy as np
 import pytest
 
 from src.contracts import HudCommand, decode_control_response, decode_live_state
+from src.sensors.fakes import FakeStorage
 from src.sensors.test_sensors import (
     RunnerHarness,
     make_memory,
     mic_input,
+    snapshot_cmd,
     sysaudio_input,
     text_input,
 )
@@ -660,3 +662,272 @@ class TestReplayLatency:
             assert outcome['elapsed_sec'] >= outcome['latency_sec']
         finally:
             harness.close()
+
+
+# --------------------------------------------------------------------------- F3: ricordi di sessione
+
+
+class TestSessionArchive:
+    """F3-runner: gli input di archive_sources diventano ricordi di sessione cercabili."""
+
+    def test_archive_sources_rejects_unknown_source(self, tmp_path):
+        with pytest.raises(ValueError, match='sorgente non ammessa'):
+            RunnerHarness(tmp_path, archive_sources=frozenset({'radio'}))
+
+    def test_agent_text_indexed_as_session_memory(self, tmp_path):
+        storage = FakeStorage()
+        harness = RunnerHarness(tmp_path, storage=storage,
+                                archive_sources=frozenset({'agent_text'}))
+        harness.ingest_text('ricordo da archiviare')
+
+        # l'embedding di archivio è un documento, non una query
+        req = harness.client.requests[-1]
+        assert req.is_query is False
+        assert req.text_payload == 'ricordo da archiviare'
+        assert req.audio_path is None
+
+        assert len(storage.session_registry) == 1
+        memory_id = next(iter(storage.session_registry))
+        entry = storage.session_registry[memory_id]
+        assert entry['session_id'] == harness.service.session_id
+        memory, _ = storage.records[memory_id]
+        assert memory.session_scope is True
+        assert memory.modality == 'markdown'
+        assert memory.content_text == 'ricordo da archiviare'
+        # file reale sotto run_dir/<session>/
+        assert Path(entry['file_path']).is_file()
+        assert Path(harness.paths.run_dir).resolve() in Path(entry['file_path']).resolve().parents
+        assert 'ricordo da archiviare' in Path(entry['file_path']).read_text(encoding='utf-8')
+
+    def test_mic_audio_indexed_with_existing_wav(self, tmp_path):
+        storage = FakeStorage()
+        harness = RunnerHarness(tmp_path, storage=storage,
+                                archive_sources=frozenset({'mic_audio'}))
+        wav = harness.mic_path('arc-voce.wav')
+        Path(wav).write_bytes(b'RIFF' + b'\0' * 96)
+        harness.service.ingest(mic_input(wav, duration=1.0, session=harness.service.session_id))
+
+        req = harness.client.requests[-1]
+        assert req.is_query is False
+        assert req.audio_path == wav
+        memory_id = next(iter(storage.session_registry))
+        memory, _ = storage.records[memory_id]
+        assert memory.modality == 'audio'
+        assert memory.file_path == str(Path(wav).resolve())
+        assert memory.session_scope is True
+        assert storage.session_registry[memory_id]['file_path'] == str(Path(wav).resolve())
+
+    def test_archive_failure_is_diagnostics_only(self, tmp_path):
+        storage = FakeStorage()
+        harness = RunnerHarness(tmp_path, storage=storage,
+                                archive_sources=frozenset({'agent_text'}))
+        storage.fail_on_replace = TimeoutError('DB archivio giù')
+        event = harness.ingest_text('input con archivio guasto')
+        assert event.sensor_status.get('archive_error') == 'DB archivio giù'
+        # la storia conserva l'input e la retrieval normale continua
+        response = harness.service.handle(snapshot_cmd())
+        assert len(response.session_inputs) == 1
+        assert storage.session_registry == {}
+
+        storage.fail_on_replace = None
+        event_ok = harness.ingest_text('riproviamo')
+        assert 'archive_error' not in event_ok.sensor_status
+        assert len(storage.session_registry) == 1
+
+    def test_no_archiving_by_default(self, tmp_path):
+        storage = FakeStorage()
+        harness = RunnerHarness(tmp_path, storage=storage)
+        harness.ingest_text('input normale')
+        assert storage.session_registry == {}
+        assert harness.client.requests[-1].is_query is True  # solo la query
+
+    def test_new_session_purges_session_memories(self, tmp_path):
+        storage = FakeStorage()
+        harness = RunnerHarness(tmp_path, storage=storage,
+                                archive_sources=frozenset({'agent_text'}))
+        harness.ingest_text('da purgare')
+        memory_id = next(iter(storage.session_registry))
+        session = harness.service.session_id
+
+        response = harness.service.handle(
+            HudCommand(command_id='ns1', session_id=session, action='new_session')
+        )
+        assert response.success
+        assert storage.session_registry == {}
+        assert memory_id not in storage.records
+        assert storage.index_gen == 1  # bump di generazione del purge
+
+    def test_purge_failure_blocks_reset(self, tmp_path):
+        storage = FakeStorage()
+        harness = RunnerHarness(tmp_path, storage=storage,
+                                archive_sources=frozenset({'agent_text'}))
+        harness.ingest_text('presente')
+        old_session = harness.service.session_id
+        storage.fail_on_purge = TimeoutError('DB giù')
+
+        response = harness.service.handle(
+            HudCommand(command_id='ns2', session_id=old_session, action='new_session')
+        )
+        assert not response.success
+        assert response.error_code == 'STORAGE_ERROR'
+        assert harness.service.session_id == old_session  # reset NON eseguito
+        assert len(harness.service.handle(snapshot_cmd()).session_inputs) == 1
+
+        storage.fail_on_purge = None  # ripristinato: il reset ora riesce
+        retry = harness.service.handle(
+            HudCommand(command_id='ns3', session_id=old_session, action='new_session')
+        )
+        assert retry.success
+
+
+# --------------------------------------------------------------------------- F3: promozione
+
+
+class TestPromote:
+    """F3-runner: promuove un ricordo di sessione a documento di contesto in watch_dir."""
+
+    @staticmethod
+    def _promote_cmd(session: str, memory_id: str, command_id: str = 'promote-1') -> HudCommand:
+        return HudCommand(command_id=command_id, session_id=session, action='promote',
+                          memory_id=memory_id)
+
+    def _archive_pin_and_promote_ready(self, tmp_path, storage):
+        harness = RunnerHarness(tmp_path, storage=storage,
+                                archive_sources=frozenset({'agent_text'}))
+        harness.ingest_text('prima frase di contesto')
+        harness.ingest_text('momento da promuovere')
+        memory_id = next(iter(storage.session_registry))
+        pinned = harness.service.handle(
+            HudCommand(command_id='pin-1', session_id=harness.service.session_id,
+                       action='pin', memory_id=memory_id)
+        )
+        assert pinned.success
+        return harness, memory_id
+
+    def test_promote_on_archive_memory_rejected(self, tmp_path):
+        storage = FakeStorage()
+        harness = RunnerHarness(tmp_path, storage=storage)
+        mem = make_memory(tmp_path, 'archivio.md')
+        storage.add(mem, [1.0] + [0.0] * 255)
+        response = harness.service.handle(
+            self._promote_cmd(harness.service.session_id, mem.id)
+        )
+        assert not response.success
+        assert response.error_code == 'NOT_SESSION_MEMORY'
+
+    def test_promote_missing_memory(self, tmp_path):
+        storage = FakeStorage()
+        harness = RunnerHarness(tmp_path, storage=storage)
+        response = harness.service.handle(
+            self._promote_cmd(harness.service.session_id, 'a' * 64)
+        )
+        assert not response.success
+        assert response.error_code == 'MEMORY_NOT_FOUND'
+
+    def test_promote_writes_context_document(self, tmp_path):
+        storage = FakeStorage()
+        harness, memory_id = self._archive_pin_and_promote_ready(tmp_path, storage)
+        response = harness.service.handle(
+            self._promote_cmd(harness.service.session_id, memory_id)
+        )
+        assert response.success
+        docs = list(Path(harness.paths.watch_dir).rglob('contesto.md'))
+        assert len(docs) == 1
+        text = docs[0].read_text(encoding='utf-8')
+        assert 'sessione: ' in text
+        assert 'sorgente: agent_text' in text
+        assert 'strumento:' in text
+        assert 'momento da promuovere' in text  # momento completo
+        assert 'prima frase di contesto' in text  # contesto circostante dalla storia
+        assert storage.session_registry[memory_id]['promoted'] is True
+
+    def test_promote_is_idempotent(self, tmp_path):
+        storage = FakeStorage()
+        harness, memory_id = self._archive_pin_and_promote_ready(tmp_path, storage)
+        session = harness.service.session_id
+        first = harness.service.handle(self._promote_cmd(session, memory_id, 'p1'))
+        second = harness.service.handle(self._promote_cmd(session, memory_id, 'p2'))
+        assert first.success and second.success
+        assert list(Path(harness.paths.watch_dir).rglob('contesto.md')) == 1 * [
+            next(Path(harness.paths.watch_dir).rglob('contesto.md'))
+        ]  # una sola scrittura
+
+    def test_promote_attaches_wav(self, tmp_path):
+        storage = FakeStorage()
+        harness = RunnerHarness(tmp_path, storage=storage,
+                                archive_sources=frozenset({'mic_audio'}))
+        wav = harness.mic_path('promuovi-voce.wav')
+        Path(wav).write_bytes(b'RIFF' + b'\0' * 64)
+        harness.service.ingest(mic_input(wav, duration=1.0, session=harness.service.session_id))
+        memory_id = next(iter(storage.session_registry))
+
+        response = harness.service.handle(
+            self._promote_cmd(harness.service.session_id, memory_id)
+        )
+        assert response.success
+        wavs = list(Path(harness.paths.watch_dir).rglob('assets/*.wav'))
+        assert len(wavs) == 1
+        assert wavs[0].read_bytes().startswith(b'RIFF')
+        text = next(Path(harness.paths.watch_dir).rglob('contesto.md')).read_text(encoding='utf-8')
+        assert 'sorgente: mic_audio' in text
+        assert wavs[0].name in text  # il documento referenzia l'allegato
+
+    def test_promote_write_failure_keeps_unpromoted(self, tmp_path):
+        storage = FakeStorage()
+        harness, memory_id = self._archive_pin_and_promote_ready(tmp_path, storage)
+        watch = Path(harness.paths.watch_dir)
+        watch.chmod(0o555)  # sola lettura: la scrittura deve fallire
+        try:
+            response = harness.service.handle(
+                self._promote_cmd(harness.service.session_id, memory_id)
+            )
+            assert not response.success
+            assert response.error_code == 'PROMOTE_FAILED'
+            assert storage.session_registry[memory_id]['promoted'] is False
+        finally:
+            watch.chmod(0o755)
+
+
+class TestSessionArchiveRealStorage:
+    """F3: integrazione con BrainStorage reale — validazione record e registry."""
+
+    def test_archive_promote_purge_with_real_storage(self, tmp_path):
+        from src.inference.model import mock_space
+        from src.storage.db import BrainStorage
+
+        space = mock_space()
+        storage = BrainStorage(str(tmp_path / 'brain-f3.db'), space)
+        try:
+            harness = RunnerHarness(tmp_path, storage=storage,
+                                    archive_sources=frozenset({'agent_text'}))
+            harness.ingest_text('ricordo reale di sessione')
+            rows = storage.conn.execute('SELECT memory_id, promoted FROM session_memories').fetchall()
+            assert len(rows) == 1
+            memory_id, promoted = rows[0]
+            assert promoted == 0
+            # il ricordo è nell'archivio con session_scope
+            memory = storage.get_memory(memory_id)
+            assert memory is not None and memory.session_scope is True
+
+            # promozione: documento scritto e marcato sul DB reale
+            response = harness.service.handle(
+                HudCommand(command_id='p1', session_id=harness.service.session_id,
+                           action='promote', memory_id=memory_id)
+            )
+            assert response.success
+            docs = list(Path(harness.paths.watch_dir).rglob('contesto.md'))
+            assert len(docs) == 1
+            assert storage.conn.execute(
+                'SELECT promoted FROM session_memories WHERE memory_id = ?', (memory_id,)
+            ).fetchone()[0] == 1
+
+            # purge al reset: il ricordo di sessione esce dall'archivio
+            reset = harness.service.handle(
+                HudCommand(command_id='ns1', session_id=harness.service.session_id,
+                           action='new_session')
+            )
+            assert reset.success
+            assert storage.conn.execute('SELECT COUNT(*) FROM session_memories').fetchone()[0] == 0
+            assert storage.get_memory(memory_id) is None
+        finally:
+            storage.close()

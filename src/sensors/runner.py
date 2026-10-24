@@ -7,6 +7,7 @@ da due thread. Il thread controllo possiede il REP ma non lo stato.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -16,6 +17,7 @@ import uuid
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import replace
+from pathlib import Path
 
 from src.config import (
     DEFAULT_ALPHA,
@@ -36,12 +38,15 @@ from src.contracts import (
     HudCommand,
     LiveInput,
     LiveStateEvent,
+    MemoryRecord,
+    MemoryView,
     PinnedMemory,
     RuntimePaths,
     ScoredMemory,
     SearchSettings,
     SpaceSpec,
     decode_hud_command,
+    make_memory_id,
     pack,
 )
 from src.sensors.ema_tracker import EMATracker
@@ -54,6 +59,14 @@ LEASE_SEC = 120.0  # finestra concessa all'HUD dopo new_session (contratti §6)
 # Chiavi di stato per le sorgenti audio nell'evento live (HUD): mic resta 'mic'
 # per compat, la cattura di sistema è 'sysaudio' (F1).
 SENSOR_STATUS_KEYS = {'mic_audio': 'mic', 'system_audio': 'sysaudio'}
+# Etichette di strumento per il front-matter del documento promosso (F3).
+TOOL_LABELS = {
+    'agent_text': 'agente-cli',
+    'mic_audio': 'microfono',
+    'system_audio': 'audio-di-sistema',
+}
+PROMOTION_BEFORE = 5  # input di storia precedenti nel contesto della promozione
+PROMOTION_AFTER = 2  # input successivi
 
 # Ordine canonico delle sorgenti nei pareggi di fusione (contratti §5).
 
@@ -123,6 +136,7 @@ class RunnerService:
         audio_root: str | None = None,
         show_all: bool = False,
         sensor_enabled: Mapping[str, bool] | None = None,
+        archive_sources: frozenset[str] | None = None,
     ):
         self.storage = storage
         self.embed_client = embed_client
@@ -160,6 +174,12 @@ class RunnerService:
             if source not in self._enabled:
                 raise ValueError(f'INVALID_REQUEST: sorgente non ammessa: {source!r}')
             self._enabled[source] = bool(enabled)
+        # Sorgenti i cui input diventano ricordi di sessione indicizzati (F3):
+        # default vuoto = nessuna archiviazione (comportamento pre-F3).
+        self.archive_sources = frozenset(archive_sources or ())
+        for source in self.archive_sources:
+            if source not in SOURCE_VALUES:
+                raise ValueError(f'INVALID_REQUEST: sorgente non ammessa: {source!r}')
         # Note esterne persistenti nel sensor_status (es. conteggio tail):
         # sopravvivono al reset di sessione, a differenza di _sensor_status.
         self._sensor_notes: dict[str, str] = {}
@@ -194,6 +214,15 @@ class RunnerService:
                 self._last_seen[item.source] = self._now()
                 self._sensor_status.pop(f'{item.source}_error', None)
         # Embedding fallito: EMA/last_seen/ranking intatti, solo diagnostica.
+        if item.source in self.archive_sources:
+            # L'archiviazione è solo diagnostica: un fallimento non tocca la pipeline.
+            try:
+                self._index_session_memory(item)
+            except Exception as exc:  # noqa: BLE001 — errore archivio: diagnostica (F3)
+                code = getattr(exc, 'code', None) or str(exc) or type(exc).__name__
+                self._sensor_status['archive_error'] = code
+            else:
+                self._sensor_status.pop('archive_error', None)
         return self._build_event('input')
 
     def status_event(self, reason: str = 'status') -> LiveStateEvent:
@@ -231,6 +260,8 @@ class RunnerService:
             return self._new_session(cmd)
         if cmd.action == 'set_mic':
             return self._set_mic(cmd)
+        if cmd.action == 'promote':
+            return self._promote(cmd)
         return self._error_response(cmd, 'INVALID_REQUEST', f'azione non gestita: {cmd.action}')
 
     def _error_response(self, cmd: HudCommand, code: str, message: str) -> ControlResponse:
@@ -289,6 +320,13 @@ class RunnerService:
 
     def _new_session(self, cmd: HudCommand) -> ControlResponse:
         now = self._now()
+        # Il purge dei ricordi di sessione precede il reset: un fallimento è
+        # STORAGE_ERROR e blocca il reset, senza perdita silenziosa (F3).
+        try:
+            self.storage.purge_session_memories(self.session_id)
+        except Exception as exc:  # noqa: BLE001 — il DB può fallire: reset bloccato
+            return self._error_response(cmd, 'STORAGE_ERROR',
+                                        f'purge ricordi di sessione fallito: {exc}')
         old_audio_dir = self._audio_dir()
         if os.path.isdir(old_audio_dir):
             # Il reset rinvia la rimozione della vecchia directory audio alla
@@ -313,6 +351,146 @@ class RunnerService:
         self._enabled['mic_audio'] = bool(cmd.enabled)
         return ControlResponse(command_id=cmd.command_id, success=True,
                                state=self._build_event('status'))
+
+    def _promote(self, cmd: HudCommand) -> ControlResponse:
+        """Promuove un ricordo di sessione a documento di contesto (F3).
+
+        Scrive il documento in watch_dir (front-matter, momento, contesto e
+        WAV allegati) e marca il ricordo come promosso. Idempotente: un
+        ricordo già promosso non viene riscritto. Una memoria fuori registry
+        (ricordo di archivio) è NOT_SESSION_MEMORY.
+        """
+        memory = self.storage.get_memory(cmd.memory_id)
+        if memory is None:
+            return self._error_response(cmd, 'MEMORY_NOT_FOUND', f'memoria assente: {cmd.memory_id}')
+        entry = self.storage.get_session_memory(cmd.memory_id)
+        if entry is None:
+            return self._error_response(cmd, 'NOT_SESSION_MEMORY',
+                                        f'{cmd.memory_id[:12]}… è un ricordo di archivio')
+        if not entry.get('promoted'):
+            try:
+                self._write_promotion(cmd.memory_id, memory)
+            except Exception as exc:  # noqa: BLE001 — documento non scritto: non marcato
+                return self._error_response(cmd, 'PROMOTE_FAILED', f'scritta promozione fallita: {exc}')
+            try:
+                self.storage.mark_session_memory_promoted(cmd.memory_id)
+            except Exception as exc:  # noqa: BLE001 — il DB può fallire
+                return self._error_response(cmd, 'STORAGE_ERROR', f'marca promozione fallita: {exc}')
+        return ControlResponse(command_id=cmd.command_id, success=True,
+                               state=self._build_event('status'))
+
+    def _write_promotion(self, memory_id: str, memory: MemoryView) -> str:
+        """Documento di contesto della promozione in watch_dir (F3).
+
+        Front-matter (sessione/sorgente/strumento), momento completo del
+        ricordo promosso, contesto circostante dalla storia e WAV allegati
+        in assets/. Ritorna il path del documento; qualsiasi errore di
+        scrittura si propaga (il ricordo resta da promuovere).
+        """
+        source_input = self._input_for_session_memory(memory)
+        center_index = (
+            self._history.index(source_input) if source_input is not None else len(self._history) - 1
+        )
+        window = self._history[max(0, center_index - PROMOTION_BEFORE):
+                               min(len(self._history), center_index + PROMOTION_AFTER + 1)]
+        directory = Path(self.paths.watch_dir) / f'promozione-{self.session_id[:8]}-{memory_id[:12]}'
+        assets = directory / 'assets'
+        assets.mkdir(parents=True, exist_ok=True)
+        attachments: list[tuple[LiveInput, str]] = []
+        for item in window:
+            if item.source in AUDIO_SOURCES and item.audio_path and os.path.isfile(item.audio_path):
+                rel = f'assets/{item.id}.wav'
+                shutil.copyfile(item.audio_path, directory / rel)
+                attachments.append((item, rel))
+        sources = sorted({item.source for item in window})
+        tools = sorted({TOOL_LABELS.get(item.source, item.source) for item in window})
+        pin = next((p for p in self._pinned if p.memory.id == memory_id), None)
+        lines = [
+            '---',
+            f'sessione: {self.session_id}',
+            f'sorgente: {", ".join(sources)}',
+            f'strumento: {", ".join(tools)}',
+            f'memory_id: {memory_id}',
+        ]
+        if pin is not None:
+            lines.append(f'pinnato_a: {pin.pinned_at:.0f}')
+        lines += [
+            '---',
+            '',
+            f'# Momento promosso: {memory.context_header}',
+            '',
+            memory.content_text or '(contenuto non testuale)',
+            '',
+            '## Contesto circostante',
+            '',
+        ]
+        for item in window:
+            if item.source in AUDIO_SOURCES:
+                rel = next((rel for attached, rel in attachments if attached.id == item.id), None)
+                line = f'- `{item.source}` ({(item.duration_sec or 0.0):.1f}s alle {item.occurred_at:.0f})'
+                if rel:
+                    line += f' — audio: [{rel}]({rel})'
+                lines.append(line)
+            else:
+                lines.append(f'- `agent_text` {item.text}')
+        path = directory / 'contesto.md'
+        path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+        return str(path)
+
+    def _input_for_session_memory(self, memory: MemoryView) -> LiveInput | None:
+        """L'input di storia che ha generato il ricordo di sessione (F3)."""
+        for item in self._history:
+            if item.source == 'agent_text':
+                if memory.file_path.endswith(f'agent-{item.id}.md'):
+                    return item
+            elif item.audio_path and os.path.realpath(item.audio_path) == os.path.realpath(memory.file_path):
+                return item
+        return None
+
+    def _index_session_memory(self, item: LiveInput) -> str:
+        """Indicizza un input come ricordo di sessione cercabile (F3).
+
+        File reale sotto run_dir/<session>/: il testo agente diventa un .md,
+        l'audio riusa il WAV già scritto dal sensore. Embedding da documento
+        (is_query=False), MemoryView con session_scope=True, poi replace_file
+        e registro di sessione. Gli errori sono del chiamante (diagnostica).
+        """
+        session_dir = os.path.join(self.audio_root, self.session_id)
+        os.makedirs(session_dir, exist_ok=True)
+        if item.source == 'agent_text':
+            file_path = os.path.join(session_dir, f'agent-{item.id}.md')
+            with open(file_path, 'w', encoding='utf-8') as handle:
+                handle.write(f'# Ricordo di sessione\n\n{item.text}\n')
+            text_payload, audio_path = item.text, None
+        else:
+            file_path = item.audio_path or ''
+            text_payload, audio_path = '', item.audio_path
+        request = EmbedRequest(
+            request_id=uuid.uuid4().hex,
+            is_query=False,
+            text_payload=text_payload,
+            audio_path=audio_path,
+        )
+        vector = self.embed_client.embed(request)
+        content_sha = _sha256_file(file_path)
+        canonical = str(Path(file_path).resolve())
+        memory = MemoryView(
+            id=make_memory_id(file_path, f'session:{item.source}', content_sha),
+            file_path=canonical,
+            modality='markdown' if item.source == 'agent_text' else 'audio',
+            chunk_key=f'session:{item.source}',
+            content_sha256=content_sha,
+            source_sha256=content_sha,
+            context_header=f'ricordo di sessione {self.session_id[:8]} ({item.source})',
+            snippet_text=(item.text or f'audio {(item.duration_sec or 0.0):.1f}s')[:350],
+            content_text=item.text or '',
+            created_at=self._now(),
+            session_scope=True,
+        )
+        self.storage.replace_file(file_path, content_sha,
+                                  [MemoryRecord(memory=memory, embedding=vector)])
+        self.storage.register_session_memories(self.session_id, [(memory.id, canonical)])
+        return memory.id
 
     # ------------------------------------------------------------------ interno
 
@@ -521,6 +699,15 @@ def _delete_unreferenced_wav(item: LiveInput) -> None:
             os.unlink(item.audio_path)
         except OSError:
             pass
+
+
+def _sha256_file(path: str) -> str:
+    """Digest del contenuto di un file, a blocchi (identità dei ricordi F3)."""
+    digest = hashlib.sha256()
+    with open(path, 'rb') as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 class RunnerServer:
@@ -837,6 +1024,7 @@ def main(argv: list[str] | None = None) -> int:
         show_all=args.show_all,
         # Lo status rispecchia la realtà della cattura: --no-mic è 'off' (F2).
         sensor_enabled={'mic_audio': not args.no_mic, 'system_audio': args.system_audio},
+        archive_sources=frozenset(config.get('archive_sources') or ()),
     )
     server = RunnerServer(service, command_timeout_sec=config.get('command_timeout_ms', 2000) / 1000)
     server.start()
