@@ -43,8 +43,8 @@ utente**; S2-audio FAIL reale documentato. Distinzioni mantenute ovunque:
 
 | Bug | Stato |
 |---|---|
-| Bottoni Pin/Apri delle card inerti (click → flash, nessuna azione) | 🔧 in fix Agent-5: `_on_sub_tick` ricostruiva l'intera lista card ogni 100 ms distruggendo i bottoni fra press e release; fix = logica click→comando separata dai widget + rebuild solo su cambiamento reale |
-| Tray visivamente disallineato dopo comandi controllo esterni | 🔧 stessa causa, stesso fix |
+| Bottoni Pin/Apri delle card inerti (click → flash, nessuna azione) | ✅ **CHIUSO con verifica desktop** (2026-10-24): causa = rebuild lista card ogni 100 ms (`_on_sub_tick`) che distruggeva i bottoni fra press e release; fix = `HudLogic` separata dai widget + rebuild solo su cambio reale; 93 test + ruff verificati; utente ha pinnato e aperto dal vivo con successo (pin nel tray+snapshot, visualizzatore lanciato, nessun flash) |
+| Tray visivamente disallineato dopo comandi controllo esterni | ✅ chiuso (stessa causa, stesso fix) |
 | Backend pin/open: SANO | verificato via socket controllo: pin ok, arco 0.25 simmetrico nel DB, comandi apertura corretti (evince --page-index=2, mpv --start=40.0) |
 
 ## Gate O4
