@@ -2,9 +2,9 @@
 
 Copiata da untracked_doc/08_EVALUATION.md §6. Per ogni voce aggiungi data,
 ambiente, PASS/FAIL/non eseguito ed evidenza breve. Le voci non eseguite non
-si spuntano. Scope: text-only per decisione utente 2026-10-18 (S2-audio FAIL
-documentato); le voci microfono restano da verificare come diagnostica
-implementativa fuori gate semantico.
+si spuntano. Scope aggiornato 2026-10-24: il gate S2-audio è PASS con voce reale
+(run-3, decisione utente opzione A); le voci microfono della checklist sono
+a tutti gli effetti parte del percorso verificato.
 
 Ambiente: Fedora 44, GNOME 50.5, Wayland, RTX 5000 Ada. Data: da compilare.
 
