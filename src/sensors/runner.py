@@ -835,7 +835,8 @@ def main(argv: list[str] | None = None) -> int:
         session_max_inputs=int(config.get('session_max_inputs', DEFAULT_SESSION_MAX_INPUTS)),
         session_audio_max_bytes=int(config.get('session_audio_max_bytes', DEFAULT_SESSION_AUDIO_MAX_BYTES)),
         show_all=args.show_all,
-        sensor_enabled={'system_audio': args.system_audio},
+        # Lo status rispecchia la realtà della cattura: --no-mic è 'off' (F2).
+        sensor_enabled={'mic_audio': not args.no_mic, 'system_audio': args.system_audio},
     )
     server = RunnerServer(service, command_timeout_sec=config.get('command_timeout_ms', 2000) / 1000)
     server.start()

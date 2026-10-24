@@ -570,6 +570,18 @@ class TestSensorStatusSources:
         assert status['sysaudio'] == 'off'
         assert status['mic'] == 'on'
 
+    def test_no_mic_wiring_reflects_off_in_status(self, tmp_path):
+        """F2 (richiesta Orchestratore): --no-mic → sensor_enabled mic_audio False → status off.
+
+        Il dict è identico a quello costruito in runner main().
+        """
+        args_mic_off = {'mic_audio': not True, 'system_audio': False}
+        harness = RunnerHarness(tmp_path, sensor_enabled=args_mic_off)
+        status = harness.service.status_event().sensor_status
+        assert status['mic'] == 'off'
+        assert status['sysaudio'] == 'off'
+        assert harness.service.mic_enabled is False
+
     def test_unknown_sensor_enabled_rejected(self, tmp_path):
         with pytest.raises(ValueError, match='sorgente non ammessa'):
             RunnerHarness(tmp_path, sensor_enabled={'radio': True})
