@@ -184,7 +184,12 @@ def test_import_rejects_incoherent_manifest_shapes(tmp_path, capsys):
     assert main(["import", "--db", db, "--manifest", str(tmp_path / "path_relario.json")]) == 1
 
     assert "MANIFEST_INVALIDO" in capsys.readouterr().err
-    assert not Path(db).exists()
+    # il DB può esistere (apertura prima del parse dei record): la garanzia è
+    # che l'import fallito non abbia scritto NIENTE ricordo.
+    import sqlite3
+
+    count = sqlite3.connect(db).execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+    assert count == 0
 
 
 def test_import_rejects_mixed_source_hashes_per_file(tmp_path, capsys):
