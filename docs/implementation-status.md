@@ -10,7 +10,7 @@ utente**; S2-audio FAIL reale documentato. Distinzioni mantenute ovunque:
 | ID | Esito | Prova |
 |---|---|---|
 | S1 | ✅ PASS reale (text) | gate finale `docs/evaluation/final.json`: 8/8 rank 1; smoke live e2e (f01.md top da messaggio agente reale) |
-| S2 | ✅ testo 8/8 ≥ 7/8 · **❌ audio FAIL reale** | `final.json` metrics; `probe-failed-run{1,2}.json` (due run indipendenti, confound rimosto in run-2) |
+| S2 | ✅ testo 8/8 ≥ 7/8 · ✅ **audio PASS con voce reale (run-3, 4/4)** | `final.json`; `probe-failed-run{1,2}.json` (TTS FAIL, conservati); `probe-real-voice-run3.json` (voce reale 4/4, tutti i formati, decisione utente opzione A, nota datata in 08 §3) |
 | S3 | ✅ PASS reale (text) | `final.json` metrics_per_format: markdown/pdf/image/video tutte 1.0 |
 | S4 | ✅ PASS reale (text) | `final.json`: astensione 5/5 negative test |
 | S5 | ✅ PASS reale (text) | `final.json` timings: p50 1.038 s / p95 1.047 s (39 campioni, debounce incluso; percorso mic non misurato) |

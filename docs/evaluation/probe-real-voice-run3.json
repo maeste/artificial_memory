@@ -1,0 +1,86 @@
+{
+  "runs": [
+    {
+      "query": "C1",
+      "channel": "audio_real_voice",
+      "gold": "f03.md",
+      "rank": 1,
+      "cosine": 0.703,
+      "pass": true,
+      "embed_sec": 0.607
+    },
+    {
+      "query": "C1",
+      "channel": "text",
+      "gold": "f03.md",
+      "rank": 1,
+      "pass": true
+    },
+    {
+      "query": "C2",
+      "channel": "audio_real_voice",
+      "gold": "f07.pdf",
+      "rank": 1,
+      "cosine": 0.83,
+      "pass": true,
+      "embed_sec": 0.077
+    },
+    {
+      "query": "C2",
+      "channel": "text",
+      "gold": "f07.pdf",
+      "rank": 1,
+      "pass": true
+    },
+    {
+      "query": "C3",
+      "channel": "audio_real_voice",
+      "gold": "f11.png",
+      "rank": 1,
+      "cosine": 0.763,
+      "pass": true,
+      "embed_sec": 0.071
+    },
+    {
+      "query": "C3",
+      "channel": "text",
+      "gold": "f11.png",
+      "rank": 1,
+      "pass": true
+    },
+    {
+      "query": "C4",
+      "channel": "audio_real_voice",
+      "gold": "f15.mp4",
+      "rank": 2,
+      "cosine": 0.722,
+      "pass": true,
+      "embed_sec": 0.071
+    },
+    {
+      "query": "C4",
+      "channel": "text",
+      "gold": "f15.mp4",
+      "rank": 1,
+      "pass": true
+    }
+  ],
+  "pass": true,
+  "summary": {
+    "audio_real_voice": "4/4",
+    "text": "4/4",
+    "formati_colpiti_audio": [
+      "image",
+      "markdown",
+      "pdf",
+      "video"
+    ],
+    "gate": true,
+    "query_embed_sec": [
+      0.607,
+      0.077,
+      0.071,
+      0.071
+    ]
+  }
+}
