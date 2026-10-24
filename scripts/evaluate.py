@@ -29,7 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.contracts import SearchSettings, SpaceSpec  # noqa: E402
 
 SCHEMA_VERSION = 1
-AUDIO_POLICY = 'S2-audio FAIL reale documentato (run-1/run-2); scope text-only per decisione utente 2026-10-18'
+AUDIO_POLICY = ('S2-audio: PASS con voce reale (run-3, 4/4, decisione utente 2026-10-24 opzione A); '
+                'query TTS sintetiche FAIL conservate come limite fixture (run-1/2); scope testuale invariato')
 CALIBRATION_PATH = Path('data/calibration.json')
 
 # Griglia di 08 §3: per cosine min_final = min_cosine; per zscore min_final nella lista.
@@ -372,7 +373,9 @@ def run_test(args: argparse.Namespace, manifest: dict, space: SpaceSpec) -> int:
     gates = {
         'S1_text': hit_rate >= 0.80,
         'S2_text': len(positives) > 0 and hit_rate >= 7 / 8,
-        'S2_audio': 'FAIL reale documentato (scope text-only per decisione utente)',
+        'S2_audio': ('PASS con voce reale (run-3: 4/4, docs/evaluation/probe-real-voice-run3.json); '
+                     'query TTS sintetiche fuori dominio per l encoder (run-1/2 FAIL conservate); '
+                     'nota datata in 08 §3, decisione utente opzione A'),
         'S3_text': len(per_format_hits) >= 4 and all(sum(h) > 0 for h in per_format_hits.values()),
         'S4_text': abstention >= 4 / 5,
         'S5_text': timings['p95_sec'] is not None and timings['p95_sec'] <= 5.0,
