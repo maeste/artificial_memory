@@ -85,6 +85,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == 'snapshot':
         command = HudCommand(command_id=uuid.uuid4().hex, session_id=None, action='snapshot')
+    elif args.command == 'new-session':
+        session = current_session(endpoint)
+        command = HudCommand(command_id=uuid.uuid4().hex, session_id=session, action='new_session')
     elif args.command == 'mic':
         if args.target not in ('on', 'off'):
             raise SystemExit('ERROR: mic richiede on|off')

@@ -26,10 +26,11 @@ _BIND_TIMEOUT_SEC = 5.0
 class EmbedServer:
     """REP socket con backend iniettabile; testabile senza pesi."""
 
-    def __init__(self, endpoint: str, space: SpaceSpec, backend_factory):
+    def __init__(self, endpoint: str, space: SpaceSpec, backend_factory, on_ready=None):
         self._endpoint = endpoint
         self._space = space
         self._backend_factory = backend_factory
+        self._on_ready = on_ready
         self._backend = None
         self._load_error: str | None = None
         self._ready = threading.Event()
@@ -41,6 +42,14 @@ class EmbedServer:
     @property
     def space_id(self) -> str:
         return self._space.space_id
+
+    @property
+    def ready(self) -> bool:
+        return self._ready.is_set()
+
+    @property
+    def load_error(self) -> str | None:
+        return self._load_error
 
     def start(self) -> None:
         self._serve_thread.start()
@@ -58,6 +67,12 @@ class EmbedServer:
             backend = self._backend_factory()
             backend.embed(EmbedRequest(request_id="warmup", is_query=True, text_payload="warmup"))
             self._backend = backend
+            if self._on_ready is not None:
+                # prima che health risponda ready: chi osserva ready vede il log già emesso
+                try:
+                    self._on_ready()
+                except Exception:
+                    pass
             self._ready.set()
         except Exception as exc:  # nessun fallback: l'errore resta visibile in health
             self._load_error = f"{type(exc).__name__}: {exc}"

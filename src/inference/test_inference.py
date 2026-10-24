@@ -785,3 +785,203 @@ class TestProbeCli:
         # sanità di latenza inferenza (S5 pipeline completa si misura nel runner)
         assert report["times"]["query_text"]["p95_ms"] < 5000
         assert report["times"]["query_audio"]["p95_ms"] < 5000
+
+
+class TestConfigSpaceIdCrossCheck:
+    def test_accepts_orchestrator_superset_config(self, tmp_path):
+        from src.inference.__main__ import load_config
+
+        config = tmp_path / "config.json"
+        space_dict = _mock_space_dict()
+        full_space = SpaceSpec(**space_dict)
+        config.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "space": space_dict,
+                    "space_id": full_space.space_id,
+                    "device": "auto",
+                    "embed_timeout_ms": 30000,
+                    "startup_timeout_sec": 300,
+                }
+            ),
+            encoding="utf-8",
+        )
+        space, device = load_config(str(config))
+        assert space.space_id == full_space.space_id
+        assert device == "auto"
+
+    def test_rejects_mismatched_space_id(self, tmp_path):
+        from src.inference.__main__ import load_config
+
+        config = tmp_path / "config.json"
+        config.write_text(
+            json.dumps({"schema_version": 1, "space": _mock_space_dict(), "space_id": "0" * 64}),
+            encoding="utf-8",
+        )
+        with pytest.raises(SystemExit, match="space_id non corrisponde"):
+            load_config(str(config))
+
+
+# ------------------------------------------------------------------ Task serve
+
+
+def _write_serve_config(tmp_path, space_dict, endpoint, device="auto"):
+    config = {
+        "schema_version": 1,
+        "space": space_dict,
+        "space_id": SpaceSpec(**space_dict).space_id,
+        "paths": {"embed_endpoint": endpoint},
+        "device": device,
+        "embed_timeout_ms": 30000,
+        "startup_timeout_sec": 300,
+    }
+    path = tmp_path / "serve-config.json"
+    path.write_text(json.dumps(config), encoding="utf-8")
+    return str(path)
+
+
+class TestServeCommand:
+    def test_serve_subprocess_mock_ready_then_sigterm(self, tmp_path):
+        import subprocess
+        import sys
+        import time as time_module
+
+        endpoint = f"ipc://{tmp_path}/serve-mock.sock"
+        config = _write_serve_config(tmp_path, _mock_space_dict(), endpoint)
+        process = subprocess.Popen(
+            [sys.executable, "-m", "src.inference", "serve", "--config", config],
+            cwd=REPO_ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            client = EmbedClient(endpoint, expected_space_id=SpaceSpec(**_mock_space_dict()).space_id, timeout_ms=2000)
+            deadline = time_module.monotonic() + 20
+            health = None
+            while time_module.monotonic() < deadline:
+                try:
+                    health = client.health()
+                    if health["ready"]:
+                        break
+                except EmbeddingError:
+                    pass
+                time_module.sleep(0.1)
+            assert health is not None and health["ready"], f"health mai pronto: {health}"
+            assert health["backend"] == "mock"
+            vector = client.embed(EmbedRequest(request_id="s1", is_query=True, text_payload="cache"))
+            assert len(vector) == 256
+            client.close()
+        finally:
+            process.terminate()
+            _, err = process.communicate(timeout=10)
+        assert process.returncode == 0
+        assert "modello pronto" in err
+        assert "arresto completato" in err
+
+    def test_serve_load_failure_exits_nonzero_without_mock_fallback(self, tmp_path, monkeypatch):
+        from src.inference.__main__ import run_serve
+
+        endpoint = f"ipc://{tmp_path}/serve-fail.sock"
+        real_space_dict = {
+            "backend": "real",
+            "model_id": "modello-inesistente-test",
+            "revision": "0" * 40,
+        }
+        config = _write_serve_config(tmp_path, real_space_dict, endpoint)
+
+        def _explode(space, device):
+            raise RuntimeError("pesi assenti (test)")
+
+        monkeypatch.setattr(EmbeddingGemmaBackend, "_load_model", classmethod(_explode))
+        result: dict = {}
+
+        def runner():
+            result["code"] = run_serve(config, poll_interval=0.05)
+
+        thread = threading.Thread(target=runner, daemon=True)
+        thread.start()
+        thread.join(timeout=15)
+        assert not thread.is_alive(), "run_serve non è uscito dopo il fallimento di caricamento"
+        assert result["code"] == 1
+
+    def test_serve_rejects_config_without_embed_endpoint(self, tmp_path):
+        from src.inference.__main__ import load_serve_config
+
+        config = tmp_path / "cfg.json"
+        config.write_text(
+            json.dumps({"schema_version": 1, "space": _mock_space_dict(), "paths": {}}),
+            encoding="utf-8",
+        )
+        with pytest.raises(SystemExit, match="embed_endpoint"):
+            load_serve_config(str(config))
+
+
+class TestServeIntegralConfig:
+    """Contratto 07 §6: il config del launcher passa INTEGRALMENTE ai figli."""
+
+    def _integral_config(self, tmp_path, endpoint, space_dict=None, **overrides):
+        space_dict = space_dict or _mock_space_dict()
+        valid_keys = {"backend", "model_id", "revision", "dimension", "preprocessing"}
+        try:
+            space_id = SpaceSpec(**{k: v for k, v in space_dict.items() if k in valid_keys}).space_id
+        except TypeError:
+            space_id = None
+        config = {
+            "schema_version": 1,
+            "space": space_dict,
+            "space_id": space_id,
+            "paths": {
+                "run_dir": "/run/user/1000/artificial-memory/run1",
+                "embed_endpoint": endpoint,
+                "events_endpoint": "ipc:///run/user/1000/artificial-memory/run1/events.sock",
+                "control_endpoint": "ipc:///run/user/1000/artificial-memory/run1/control.sock",
+                "db_path": "/abs/data/brain-real.db",
+                "watch_dir": "/abs/watch",
+                "export_dir": "/abs/exports",
+            },
+            "device": "auto",
+            "embed_timeout_ms": 30000,
+            "startup_timeout_sec": 300,
+            # chiavi dei FIGLI ALTRI (runner/watcher/hud): accettate e ignorate da serve
+            "agent_format": "claude-jsonl",
+            "agent_log": "/abs/agent.log",
+            "alpha": 0.35,
+            "asr_model_dir": None,
+            "command_timeout_ms": 2000,
+            "max_pins": 12,
+            "mic_enabled": True,
+            "search": {"top_k": 5, "score_mode": "cosine"},
+            "session_limit_sec": 3600,
+            "session_max_inputs": 2000,
+            "session_audio_max_bytes": 125829120,
+            "show_all": False,
+            "source_ttl_sec": 120,
+            "transcription": "off",
+        }
+        config.update(overrides)
+        path = tmp_path / "integral-config.json"
+        path.write_text(json.dumps(config), encoding="utf-8")
+        return str(path)
+
+    def test_integral_launcher_config_accepted(self, tmp_path):
+        from src.inference.__main__ import load_serve_config
+
+        space, endpoint, device = load_serve_config(
+            self._integral_config(tmp_path, "ipc:///run/user/1000/am/run1/embed.sock")
+        )
+        assert space.model_id == "semantic-hash-mock"
+        assert endpoint == "ipc:///run/user/1000/am/run1/embed.sock"
+        assert device == "auto"
+
+    def test_consumed_fields_still_strict(self, tmp_path):
+        from src.inference.__main__ import load_serve_config
+
+        with pytest.raises(SystemExit, match="embed_endpoint"):
+            load_serve_config(self._integral_config(tmp_path, "ipc:///x/embed.sock", paths={"watch_dir": "/w"}))
+        bad_space = _mock_space_dict() | {"surprise": True}
+        with pytest.raises(SystemExit, match="campi sconosciuti"):
+            load_serve_config(self._integral_config(tmp_path, "ipc:///x/embed.sock", space_dict=bad_space))
+        with pytest.raises(SystemExit, match="space_id non corrisponde"):
+            load_serve_config(self._integral_config(tmp_path, "ipc:///x/embed.sock", space_id="0" * 64))

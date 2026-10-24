@@ -18,7 +18,9 @@ import json
 import math
 import os
 import platform
+import signal
 import sys
+import threading
 import time
 import uuid
 from dataclasses import asdict
@@ -27,6 +29,7 @@ import numpy as np
 
 from src.contracts import EmbedRequest, MemoryRecord, MemoryView, SpaceSpec
 from src.inference.model import EmbeddingGemmaBackend, SemanticHashMock
+from src.inference.server import EmbedServer
 
 CONFIG_SCHEMA_VERSION = 1
 REPORT_SCHEMA_VERSION = 1
@@ -54,7 +57,16 @@ def load_config(path: str) -> tuple[SpaceSpec, str]:
         raise SystemExit(f"config non è JSON valido: {path}: {exc}") from exc
     if not isinstance(config, dict) or config.get("schema_version") != CONFIG_SCHEMA_VERSION:
         raise SystemExit(f"config: schema_version atteso {CONFIG_SCHEMA_VERSION}: {path}")
-    unknown = set(config) - {"schema_version", "space", "device"}
+    # campi extra dell'Orchestratore ammessi: space_id è verificato sotto,
+    # embed_timeout_ms/startup_timeout_sec appartengono al launcher/server
+    unknown = set(config) - {
+        "schema_version",
+        "space",
+        "device",
+        "space_id",
+        "embed_timeout_ms",
+        "startup_timeout_sec",
+    }
     if unknown:
         raise SystemExit(f"config: campi sconosciuti {sorted(unknown)}")
     space_raw = config.get("space")
@@ -64,6 +76,11 @@ def load_config(path: str) -> tuple[SpaceSpec, str]:
     if not {"backend", "model_id", "revision"} <= set(space_raw):
         raise SystemExit("config: spazio richiede backend, model_id, revision")
     space = SpaceSpec(**space_raw)
+    expected_space_id = config.get("space_id")
+    if expected_space_id is not None and expected_space_id != space.space_id:
+        raise SystemExit(
+            f"config: space_id non corrisponde allo SpaceSpec: atteso {space.space_id}, trovato {expected_space_id}"
+        )
     return space, str(config.get("device", "auto"))
 
 
@@ -406,6 +423,109 @@ def cmd_probe(args: argparse.Namespace) -> None:
         raise SystemExit(2)
 
 
+# ------------------------------------------------------------------ Task serve
+
+
+def _log(message: str) -> None:
+    print(f"[inference] {time.strftime('%H:%M:%S')} {message}", file=sys.stderr, flush=True)
+
+
+def load_serve_config(path: str) -> tuple[SpaceSpec, str, str]:
+    """Config di bootstrap del launcher (07 §6: passato INTEGRALMENTE ai figli).
+
+    Il file è condiviso fra server, watcher e runner: le chiavi degli altri
+    figli (search, alpha, max_pins, session_*, agent_log, ...) sono accettate e
+    ignorate. La strettezza riguarda i campi CHE CONSUMO: space malformato,
+    paths.embed_endpoint mancante o space_id non corrispondente → errore.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            config = json.load(fh)
+    except OSError as exc:
+        raise SystemExit(f"config illeggibile: {path}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"config non è JSON valido: {path}: {exc}") from exc
+    if not isinstance(config, dict):
+        raise SystemExit(f"config non è un oggetto: {path}")
+    space_raw = config.get("space")
+    known_space = {"backend", "model_id", "revision", "dimension", "preprocessing"}
+    if not isinstance(space_raw, dict) or set(space_raw) - known_space:
+        raise SystemExit("config: spazio mancante o con campi sconosciuti")
+    if not {"backend", "model_id", "revision"} <= set(space_raw):
+        raise SystemExit("config: spazio richiede backend, model_id, revision")
+    space = SpaceSpec(**space_raw)
+    expected_space_id = config.get("space_id")
+    if expected_space_id is not None and expected_space_id != space.space_id:
+        raise SystemExit(
+            f"config: space_id non corrisponde allo SpaceSpec: atteso {space.space_id}, trovato {expected_space_id}"
+        )
+    paths_raw = config.get("paths")
+    if not isinstance(paths_raw, dict):
+        raise SystemExit("config: paths mancante (serve paths.embed_endpoint)")
+    endpoint = paths_raw.get("embed_endpoint")
+    if not isinstance(endpoint, str) or not endpoint:
+        raise SystemExit("config: paths.embed_endpoint mancante o vuoto")
+    return space, endpoint, str(config.get("device", "auto"))
+
+
+def run_serve(config_path: str, poll_interval: float = 0.5) -> int:
+    """Entrypoint di servizio: EmbedServer vive fino a SIGTERM/SIGINT.
+
+    Ritorna 0 su arresto pulito, 1 se il caricamento del modello fallisce
+    (nessun fallback al mock). Da chiamare nel main thread per i segnali;
+    fuori dal main thread i segnali vengono semplicemente ignorati.
+    """
+    space, endpoint, device = load_serve_config(config_path)
+    _log(
+        f"avvio servizio: endpoint={endpoint} backend={space.backend} "
+        f"model={space.model_id} revision={space.revision[:12]} device={device}"
+    )
+    if space.backend == "mock":
+        mock_backend = SemanticHashMock(space)
+
+        def factory():
+            return mock_backend
+
+    else:
+
+        def factory():
+            return EmbeddingGemmaBackend(space, device)
+
+    server = EmbedServer(
+        endpoint,
+        space,
+        factory,
+        on_ready=lambda: _log("modello pronto (caricato e warmup riuscito)"),
+    )
+    stop = threading.Event()
+
+    def _handle_signal(signum, _frame):
+        _log(f"segnale {signum} ricevuto: arresto")
+        stop.set()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, _handle_signal)
+        except ValueError:  # fuori dal main thread (test in-process)
+            pass
+    server.start()
+    _log("REP in ascolto, caricamento modello e warmup in corso")
+    try:
+        while not stop.is_set():
+            if server.load_error is not None:
+                _log(f"ERRORE caricamento modello: {server.load_error}")
+                return 1
+            stop.wait(poll_interval)
+    finally:
+        server.stop()
+    _log("arresto completato")
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> None:
+    raise SystemExit(run_serve(args.config))
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="python -m src.inference", description="Inferenza multimodale: embed e probe"
@@ -426,6 +546,11 @@ def main(argv: list[str] | None = None) -> None:
     probe_parser.add_argument("--split", choices=["calibration", "test"])
     probe_parser.add_argument("--repeats", type=int, default=1, help="ripetizioni per query (tempi a caldo)")
     probe_parser.set_defaults(func=cmd_probe)
+    serve_parser = subparsers.add_parser(
+        "serve", help="servizio REP: avvia EmbedServer dal config di bootstrap del launcher"
+    )
+    serve_parser.add_argument("--config", required=True, help="config JSON del launcher (run_dir/config.json)")
+    serve_parser.set_defaults(func=cmd_serve)
     args = parser.parse_args(argv)
     args.func(args)
 

@@ -127,6 +127,7 @@ uv run pytest src/inference -m real_model -q         # richiede i pesi in cache
   richiesta al load: segnalata per il lockfile.
 - `SemanticHashMock` non supera la Fase 1 e non attiva mai il fallback: serve
   solo a sviluppare cablaggio con DB e SpaceSpec dedicati.
+
 ## Canale audio: voce naturale vs sintetica (2026-10-24)
 
 Il gate Fase 1 è PASS (run-3) con **voce reale**: parlato italiano naturale
