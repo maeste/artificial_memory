@@ -587,3 +587,12 @@ class TestTickRebuildsOnlyOnChange:
         logic, worker = make_logic()
         command = logic.start_discovery()
         assert command.session_id is None and command.action == "snapshot"
+
+    def test_mic_button_label_follows_sensor_status(self):
+        logic, _worker = make_logic()
+        logic.state.apply_event(make_event(1))  # sensor_status senza 'mic': default on
+        assert logic.mic_label() == "Mic: on"
+        logic.state.event.sensor_status["mic"] = "off"
+        assert logic.mic_label() == "Mic: off"
+        logic.state.event.sensor_status["mic"] = "error"
+        assert logic.mic_label() == "Mic: error"

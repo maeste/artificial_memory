@@ -347,6 +347,14 @@ class HudLogic:
     def request_open(self, memory):
         self.open_file(memory)
 
+    def mic_label(self) -> str:
+        """Etichetta del bottone Mic: segue sensor_status dello snapshot.
+
+        Default 'on' se assente, la stessa convenzione di request_mic_toggle;
+        nessun aggiornamento ottimistico al click, segue lo stato applicato.
+        """
+        return f"Mic: {self.state.sensor_status.get('mic') or 'on'}"
+
     # ---------------------------------------------------------------- risposte ed eventi
 
     def _on_worker_response(self, response):
@@ -614,6 +622,7 @@ class HudWindow(HudLogic):
     def _refresh_header(self, now, pinned_ids):
         status = self.state.status(now)
         event = self.state.event
+        self.mic_button.set_label(self.mic_label())
         if status == "waiting_backend":
             self.header_label.set_text("in attesa del backend")
         elif event is not None:
