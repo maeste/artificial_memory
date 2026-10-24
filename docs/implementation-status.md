@@ -39,6 +39,14 @@ utente**; S2-audio FAIL reale documentato. Distinzioni mantenute ovunque:
 | Agent-4-Sensors | ✅ TASK_DONE L1–L4 + latency_sec | 95 test; harness usato da gate finale e S5 |
 | Agent-5-HUD | ✅ CHIUSO H1–H4 (fix mute incluso e verificato) | 83 test (incl. real_model) + export local senza warning; sola verifica desktop manuale pendente |
 
+## Bug UI HUD (sessione manuale 2026-10-24)
+
+| Bug | Stato |
+|---|---|
+| Bottoni Pin/Apri delle card inerti (click → flash, nessuna azione) | 🔧 in fix Agent-5: `_on_sub_tick` ricostruiva l'intera lista card ogni 100 ms distruggendo i bottoni fra press e release; fix = logica click→comando separata dai widget + rebuild solo su cambiamento reale |
+| Tray visivamente disallineato dopo comandi controllo esterni | 🔧 stessa causa, stesso fix |
+| Backend pin/open: SANO | verificato via socket controllo: pin ok, arco 0.25 simmetrico nel DB, comandi apertura corretti (evince --page-index=2, mpv --start=40.0) |
+
 ## Gate O4
 
 - Fase 1: testo PASS pieno / audio FAIL documentato (decisione utente text-only).
