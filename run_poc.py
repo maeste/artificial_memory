@@ -63,14 +63,18 @@ def resolve_revision(args: argparse.Namespace) -> str:
     )
 
 
-def build_search_settings(args: argparse.Namespace, calibration_path: str | None) -> SearchSettings:
-    if calibration_path and Path(calibration_path).exists():
-        frozen = json.loads(Path(calibration_path).read_text())
-        return SearchSettings(
-            score_mode=frozen['score_mode'], min_cosine=frozen['min_cosine'],
-            min_final=frozen['min_final'], gamma=0.6, activation_threshold=0.5,
-        )
-    return SearchSettings()
+def build_search_settings(args: argparse.Namespace, calibration_path: str | None) -> tuple[SearchSettings, dict | None]:
+    """Soglie effettive: --calibration esplicita, poi data/calibration.json se esiste
+    (congelata dalla procedura di 08 §3), poi i default del contratto."""
+    for candidate in (calibration_path, 'data/calibration.json'):
+        if candidate and Path(candidate).exists():
+            frozen = json.loads(Path(candidate).read_text())
+            return SearchSettings(
+                score_mode=frozen['score_mode'], min_cosine=frozen['min_cosine'],
+                min_final=frozen['min_final'], gamma=frozen.get('gamma', 0.6),
+                activation_threshold=frozen.get('activation_threshold', 0.5),
+            ), frozen
+    return SearchSettings(), None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -90,7 +94,11 @@ def main(argv: list[str] | None = None) -> int:
     paths = make_runtime_paths(run_id, db_path, args.watch_dir, export_dir,
                                runtime_root_override=args.runtime_root)
     config_path = Path(paths.run_dir) / 'config.json'
-    config = AppConfig(space=space, paths=paths, search=build_search_settings(args, args.calibration),
+    search_settings, frozen_calibration = build_search_settings(args, args.calibration)
+    if frozen_calibration:
+        print(f'calibrazione congelata caricata: {frozen_calibration["score_mode"]}/'
+              f'{frozen_calibration["min_cosine"]} (data/calibration.json)', file=sys.stderr)
+    config = AppConfig(space=space, paths=paths, search=search_settings,
                        device=args.device, mic_enabled=not args.no_mic)
     config_path.write_text(json.dumps({
         'space': {
