@@ -616,3 +616,83 @@ def test_memory_record_roundtrip_via_embed_flow(memory_view):
     record = MemoryRecord(memory=memory_view, embedding=unit_vector(5))
     assert record.memory.id == memory_view.id
     validate_vector(record.embedding)
+
+
+# --------------------------------------------------------------------------- F1: system_audio
+
+
+class TestSystemAudioWire:
+    """F1: system_audio come terza sorgente (estensione contratti 2026-10-25)."""
+
+    @staticmethod
+    def _event_with_input(payload: dict, sensor_status: dict | None = None) -> str:
+        return json.dumps(
+            {
+                'schema_version': 1,
+                'type': 'live.state',
+                'payload': {
+                    'event_id': 'ev-sys',
+                    'sequence': 1,
+                    'session_id': 'sess-1',
+                    'space_id': '0'.rjust(64, '0'),
+                    'backend': 'mock',
+                    'emitted_at': 1792300000.0,
+                    'reason': 'input',
+                    'latest_inputs': [payload],
+                    'results': [],
+                    'pinned': [],
+                    'sensor_status': sensor_status or {},
+                    'source_last_seen': {},
+                    'dropped_inputs': 0,
+                },
+            },
+            ensure_ascii=False,
+        )
+
+    def test_system_audio_input_roundtrip(self):
+        raw = self._event_with_input(
+            {
+                'id': 'in-sys',
+                'session_id': 'sess-1',
+                'source': 'system_audio',
+                'occurred_at': 1792300000.0,
+                'audio_path': '/tmp/sys-1.wav',
+                'duration_sec': 2.0,
+                'text': '',
+            }
+        )
+        event = decode_live_state(raw)
+        assert [item.source for item in event.latest_inputs] == ['system_audio']
+        assert event.latest_inputs[0].audio_path == '/tmp/sys-1.wav'
+        assert event.latest_inputs[0].duration_sec == 2.0
+
+    @pytest.mark.parametrize('source', ['mic_audio', 'system_audio'])
+    def test_audio_source_without_path_rejected(self, source):
+        raw = self._event_with_input(
+            {'id': 'in-x', 'session_id': 'sess-1', 'source': source, 'occurred_at': 1792300000.0}
+        )
+        with pytest.raises(ValueError, match=f'{source} senza audio_path'):
+            decode_live_state(raw)
+
+    @pytest.mark.parametrize('source', ['mic_audio', 'system_audio'])
+    def test_audio_source_status_key_roundtrip(self, source):
+        raw = self._event_with_input(
+            {
+                'id': 'in-y',
+                'session_id': 'sess-1',
+                'source': source,
+                'occurred_at': 1792300000.0,
+                'audio_path': f'/tmp/{source}.wav',
+            },
+            sensor_status={source: 'on'},
+        )
+        event = decode_live_state(raw)
+        # la sorgente è ammessa anche come chiave di sensor_status
+        assert event.sensor_status.get(source) == 'on'
+        assert event.latest_inputs[0].source == source
+
+    def test_audio_modality_roundtrip(self, live_state, scored, memory_view):
+        audio_memory = dataclasses.replace(memory_view, modality='audio', file_path='/home/demo/watch_dir/f07.wav')
+        event = dataclasses.replace(live_state, results=[dataclasses.replace(scored, memory=audio_memory)])
+        decoded = decode_live_state(pack('live.state', event))
+        assert decoded.results[0].memory.modality == 'audio'

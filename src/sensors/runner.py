@@ -14,7 +14,7 @@ import sys
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 
 from src.config import (
@@ -26,6 +26,7 @@ from src.config import (
     DEFAULT_SOURCE_TTL_SEC,
 )
 from src.contracts import (
+    AUDIO_SOURCES,
     MAX_LATEST_INPUTS,
     MAX_SNAPSHOT_INPUT_IDS,
     SOURCE_VALUES,
@@ -45,11 +46,14 @@ from src.contracts import (
 )
 from src.sensors.ema_tracker import EMATracker
 
-SOURCE_ORDER = ('agent_text', 'mic_audio')
+SOURCE_ORDER = ('agent_text', 'mic_audio', 'system_audio')
 CANDIDATE_MULTIPLIER = 4  # candidati richiesti a Storage per sorgente (piano L1)
 MAX_COMMAND_CACHE = 256
 DEBUG_SHOW_ALL = 'DEBUG'
 LEASE_SEC = 120.0  # finestra concessa all'HUD dopo new_session (contratti §6)
+# Chiavi di stato per le sorgenti audio nell'evento live (HUD): mic resta 'mic'
+# per compat, la cattura di sistema è 'sysaudio' (F1).
+SENSOR_STATUS_KEYS = {'mic_audio': 'mic', 'system_audio': 'sysaudio'}
 
 # Ordine canonico delle sorgenti nei pareggi di fusione (contratti §5).
 
@@ -118,6 +122,7 @@ class RunnerService:
         session_audio_max_bytes: int = DEFAULT_SESSION_AUDIO_MAX_BYTES,
         audio_root: str | None = None,
         show_all: bool = False,
+        sensor_enabled: Mapping[str, bool] | None = None,
     ):
         self.storage = storage
         self.embed_client = embed_client
@@ -148,7 +153,16 @@ class RunnerService:
         self._sequence = 0
         self._sensor_status: dict[str, str] = {}
         self._dropped_inputs = 0
-        self._mic_enabled = True
+        # Stato on/off per sorgente (F1): default tutto attivo, override via
+        # sensor_enabled (es. {'system_audio': False} senza --system-audio).
+        self._enabled: dict[str, bool] = {source: True for source in SOURCE_ORDER}
+        for source, enabled in (sensor_enabled or {}).items():
+            if source not in self._enabled:
+                raise ValueError(f'INVALID_REQUEST: sorgente non ammessa: {source!r}')
+            self._enabled[source] = bool(enabled)
+        # Note esterne persistenti nel sensor_status (es. conteggio tail):
+        # sopravvivono al reset di sessione, a differenza di _sensor_status.
+        self._sensor_notes: dict[str, str] = {}
         self._session_suspended = False
         self._audio_bytes = 0
         self._started_at = self._clock()
@@ -296,7 +310,7 @@ class RunnerService:
                                lease_expires_at=self._lease_expires_at)
 
     def _set_mic(self, cmd: HudCommand) -> ControlResponse:
-        self._mic_enabled = bool(cmd.enabled)
+        self._enabled['mic_audio'] = bool(cmd.enabled)
         return ControlResponse(command_id=cmd.command_id, success=True,
                                state=self._build_event('status'))
 
@@ -312,9 +326,9 @@ class RunnerService:
             raise ValueError('INVALID_REQUEST: session_id vuoto')
         if item.source == 'agent_text' and not item.text:
             raise ValueError('INVALID_REQUEST: input agent_text senza testo')
-        if item.source == 'mic_audio':
+        if item.source in AUDIO_SOURCES:
             if not item.audio_path:
-                raise ValueError('INVALID_REQUEST: input mic_audio senza audio_path')
+                raise ValueError(f'INVALID_REQUEST: input {item.source} senza audio_path')
             if not os.path.isabs(item.audio_path):
                 raise ValueError(f'INVALID_REQUEST: audio_path relativo: {item.audio_path}')
 
@@ -328,12 +342,12 @@ class RunnerService:
         return self._audio_bytes + incoming > self.session_audio_max_bytes
 
     def _register_audio(self, item: LiveInput) -> None:
-        if item.source == 'mic_audio':
+        if item.source in AUDIO_SOURCES:
             self._audio_bytes += self._audio_size(item)
 
     @staticmethod
     def _audio_size(item: LiveInput) -> int:
-        if item.source != 'mic_audio' or not item.audio_path:
+        if item.source not in AUDIO_SOURCES or not item.audio_path:
             return 0
         try:
             return os.path.getsize(item.audio_path)
@@ -345,7 +359,7 @@ class RunnerService:
             request_id=uuid.uuid4().hex,
             is_query=True,
             text_payload=item.text if item.source == 'agent_text' else '',
-            audio_path=item.audio_path if item.source == 'mic_audio' else None,
+            audio_path=item.audio_path if item.source in AUDIO_SOURCES else None,
         )
         try:
             return self.embed_client.embed(request)
@@ -382,7 +396,11 @@ class RunnerService:
         now = self._now()
         self._sequence += 1
         status = dict(self._sensor_status)
-        status['mic'] = 'on' if self._mic_enabled else 'off'
+        status.update(self._sensor_notes)
+        for source in SOURCE_ORDER:
+            key = SENSOR_STATUS_KEYS.get(source)
+            if key is not None:
+                status[key] = 'on' if self._enabled[source] else 'off'
         if self.show_all:
             status['show_all'] = DEBUG_SHOW_ALL
         if self._session_suspended:
@@ -435,9 +453,21 @@ class RunnerService:
         """Il worker registra lo scarto per coda piena (contratti §6)."""
         self._dropped_inputs += 1
 
+    def note_sensor(self, key: str, value: str) -> None:
+        """Annotazione esterna nel sensor_status (es. 'agent_logs': numero tail).
+
+        Sopravvive al reset di sessione; le chiavi per sorgente (mic/sysaudio)
+        restano calcolate dallo stato interno in _build_event.
+        """
+        self._sensor_notes[key] = value
+
+    def sensor_enabled(self, source: str) -> bool:
+        """Stato on/off di una sorgente: i callback di cattura lo consultano."""
+        return self._enabled.get(source, False)
+
     @property
     def mic_enabled(self) -> bool:
-        return self._mic_enabled
+        return self._enabled['mic_audio']  # compat/replay (piano L3)
 
     @property
     def session_suspended(self) -> bool:
@@ -486,7 +516,7 @@ class LiveInputQueue:
 
 def _delete_unreferenced_wav(item: LiveInput) -> None:
     """Elimina il WAV di un input scartato: non referenziato da storia o pin."""
-    if item.source == 'mic_audio' and item.audio_path:
+    if item.source in AUDIO_SOURCES and item.audio_path:
         try:
             os.unlink(item.audio_path)
         except OSError:
@@ -719,6 +749,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--agent-log', default=None, help='path esplicito del log agente')
     parser.add_argument('--agent-format', choices=('plain', 'claude-jsonl'), default='plain')
     parser.add_argument('--no-mic', action='store_true', help='disattiva la cattura microfono')
+    parser.add_argument(
+        '--system-audio', action='store_true',
+        help="cattura anche l'audio di sistema (monitor PipeWire via parec -d @DEFAULT_MONITOR@)",
+    )
     parser.add_argument('--show-all', action='store_true', help='salta le soglie visive (DEBUG)')
     parser.add_argument(
         '--replay-log', action='store_true',
@@ -743,6 +777,7 @@ def main(argv: list[str] | None = None) -> int:
         session_max_inputs=int(config.get('session_max_inputs', DEFAULT_SESSION_MAX_INPUTS)),
         session_audio_max_bytes=int(config.get('session_audio_max_bytes', DEFAULT_SESSION_AUDIO_MAX_BYTES)),
         show_all=args.show_all,
+        sensor_enabled={'system_audio': args.system_audio},
     )
     server = RunnerServer(service, command_timeout_sec=config.get('command_timeout_ms', 2000) / 1000)
     server.start()
@@ -765,30 +800,52 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f'runner: tail su {args.agent_log} ({args.agent_format})', file=sys.stderr)
 
-    mic = None
-    capture = None
+    captures = []
 
-    def on_audio_block(block) -> None:
-        if service.mic_enabled and not service.session_suspended:
-            for item in mic.feed_block(block):
-                enqueue(item)
-        else:
-            for item in mic.flush():  # pausa: flush controllato, il testo resta attivo
-                enqueue(item)
+    def make_audio_callback(sensor, enabled: Callable[[], bool]) -> Callable[[object], None]:
+        """Callback speculare per ogni sorgente audio: attiva → feed, pausa → flush."""
 
-    if not args.no_mic:
+        def on_block(block) -> None:
+            if enabled() and not service.session_suspended:
+                for item in sensor.feed_block(block):
+                    enqueue(item)
+            else:
+                for item in sensor.flush():  # pausa: flush controllato, il testo resta attivo
+                    enqueue(item)
+
+        return on_block
+
+    def run_capture(capture_obj, label: str) -> None:
+        try:
+            capture_obj.start()  # blocca nel thread dedicato finché non si ferma
+        except Exception as exc:  # noqa: BLE001 — niente fallback finto: errore chiaro
+            print(f'runner: {label} non disponibile ({exc}); solo sorgente testuale',
+                  file=sys.stderr)
+
+    if not args.no_mic or args.system_audio:
         from src.sensors.mic_sensor import AudioCapture, MicSensor
 
+    if not args.no_mic:
         mic = MicSensor(audio_root=paths.run_dir, session_provider=lambda: service.session_id)
-        capture = AudioCapture(on_audio_block)
+        mic_capture = AudioCapture(make_audio_callback(mic, service.sensor_enabled('mic_audio')))
+        captures.append(mic_capture)
+        threading.Thread(target=run_capture, args=(mic_capture, 'microfono'),
+                         name='mic-capture', daemon=True).start()
 
-        def run_capture() -> None:
-            try:
-                capture.start()  # blocca nel thread dedicato finché non si ferma
-            except Exception as exc:  # noqa: BLE001 — niente fallback finto: errore chiaro
-                print(f'runner: microfono non disponibile ({exc}); solo sorgente testuale', file=sys.stderr)
-
-        threading.Thread(target=run_capture, name='mic-capture', daemon=True).start()
+    if args.system_audio:
+        sysaudio = MicSensor(
+            source='system_audio', file_prefix='sysaudio',
+            audio_root=paths.run_dir, session_provider=lambda: service.session_id,
+        )
+        # @DEFAULT_MONITOR@: l'output del desktop, MAI il microfono (parec senza
+        # -d registra il mic: il device è sempre esplicito qui).
+        sys_capture = AudioCapture(
+            make_audio_callback(sysaudio, service.sensor_enabled('system_audio')),
+            parec_device='@DEFAULT_MONITOR@',
+        )
+        captures.append(sys_capture)
+        threading.Thread(target=run_capture, args=(sys_capture, "cattura audio di sistema"),
+                         name='sysaudio-capture', daemon=True).start()
 
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     print(f'runner: sessione {service.session_id[:8]}… eventi su {paths.events_endpoint}', file=sys.stderr)
@@ -804,8 +861,8 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         print(f'runner: arresto; diagnostica tail: {tail.diagnostics if tail else "n/d"}', file=sys.stderr)
         server.close()
-        if capture is not None:
-            capture.stop()
+        for capture_obj in captures:
+            capture_obj.stop()
         client.close()
         storage.close()
     return 0

@@ -5,12 +5,19 @@ reali in directory temporanee (livello «integrazione mock», 08 §1).
 """
 
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
 
 from src.contracts import HudCommand, decode_control_response, decode_live_state
-from src.sensors.test_sensors import RunnerHarness, make_memory, text_input
+from src.sensors.test_sensors import (
+    RunnerHarness,
+    make_memory,
+    mic_input,
+    sysaudio_input,
+    text_input,
+)
 
 
 def pin_cmd(session: str, memory_id: str, command_id: str) -> HudCommand:
@@ -546,6 +553,81 @@ class TestMicCommand:
             HudCommand(command_id='mic-on', session_id=session, action='set_mic', enabled=True)
         )
         assert back.state.sensor_status['mic'] == 'on'
+
+
+class TestSensorStatusSources:
+    """F1: stato per sorgente — mic resta 'mic', la cattura di sistema è 'sysaudio'."""
+
+    def test_default_both_audio_sources_on(self, tmp_path):
+        harness = RunnerHarness(tmp_path)
+        status = harness.service.status_event().sensor_status
+        assert status['mic'] == 'on'
+        assert status['sysaudio'] == 'on'
+
+    def test_sensor_enabled_false_keeps_sysaudio_off(self, tmp_path):
+        harness = RunnerHarness(tmp_path, sensor_enabled={'system_audio': False})
+        status = harness.service.status_event().sensor_status
+        assert status['sysaudio'] == 'off'
+        assert status['mic'] == 'on'
+
+    def test_unknown_sensor_enabled_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match='sorgente non ammessa'):
+            RunnerHarness(tmp_path, sensor_enabled={'radio': True})
+
+    def test_set_mic_leaves_sysaudio_unchanged(self, tmp_path):
+        harness = RunnerHarness(tmp_path)
+        session = harness.service.session_id
+        harness.service.handle(
+            HudCommand(command_id='m-off', session_id=session, action='set_mic', enabled=False)
+        )
+        status = harness.service.status_event().sensor_status
+        assert status['mic'] == 'off'
+        assert status['sysaudio'] == 'on'  # il comando mic non tocca la cattura di sistema
+
+    def test_mic_enabled_property_compat(self, tmp_path):
+        """Compat/replay: la property mic_enabled continua a riflettere set_mic."""
+        harness = RunnerHarness(tmp_path)
+        assert harness.service.mic_enabled is True
+        session = harness.service.session_id
+        harness.service.handle(
+            HudCommand(command_id='m-off', session_id=session, action='set_mic', enabled=False)
+        )
+        assert harness.service.mic_enabled is False
+        assert harness.service.sensor_enabled('mic_audio') is False
+        assert harness.service.sensor_enabled('system_audio') is True
+
+
+class TestAudioBudget:
+    """F1: il budget session_audio_max_bytes conta anche la cattura di sistema."""
+
+    def test_budget_counts_mic_and_system_combined(self, tmp_path):
+        harness = RunnerHarness(tmp_path, session_audio_max_bytes=1500)
+        mic_file = harness.mic_path('budget-mic.wav')
+        sys_file = harness.mic_path('budget-sys.wav')
+        Path(mic_file).write_bytes(b'\0' * 1000)
+        Path(sys_file).write_bytes(b'\0' * 904)
+        harness.service.ingest(
+            mic_input(mic_file, duration=0.03, session=harness.service.session_id)
+        )
+        assert harness.service._audio_bytes == 1000
+        with pytest.raises(ValueError, match='SESSION_FULL'):
+            harness.service.ingest(
+                sysaudio_input(sys_file, duration=0.03, session=harness.service.session_id)
+            )
+
+    def test_system_audio_within_budget_passes(self, tmp_path):
+        harness = RunnerHarness(tmp_path, session_audio_max_bytes=2000)
+        sys_file = harness.mic_path('budget-ok.wav')
+        Path(sys_file).write_bytes(b'\0' * 1000)
+        harness.service.ingest(
+            sysaudio_input(sys_file, duration=0.03, session=harness.service.session_id)
+        )
+        assert harness.service._audio_bytes == 1000
+
+    def test_text_input_never_counts_audio_budget(self, tmp_path):
+        harness = RunnerHarness(tmp_path, session_audio_max_bytes=100)
+        harness.ingest_text('il testo non pesa sul budget audio')
+        assert harness.service._audio_bytes == 0
 
 
 class TestReplayLatency:

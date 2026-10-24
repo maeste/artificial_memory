@@ -34,6 +34,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument('--agent-log', default=None)
     parser.add_argument('--agent-format', choices=['plain', 'claude-jsonl'], default='plain')
     parser.add_argument('--no-mic', action='store_true')
+    parser.add_argument('--system-audio', action='store_true',
+                        help="cattura anche l'audio di sistema (monitor PipeWire)")
     parser.add_argument('--device', choices=['auto', 'cpu', 'cuda'], default='auto')
     parser.add_argument('--db', default=None)
     parser.add_argument('--show-all', action='store_true')
@@ -117,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
             'min_cosine': config.search.min_cosine, 'min_final': config.search.min_final,
         },
         'device': config.device, 'mic_enabled': config.mic_enabled,
+        'system_audio': args.system_audio,
         'alpha': config.alpha, 'source_ttl_sec': config.source_ttl_sec,
         'command_timeout_ms': config.command_timeout_ms, 'embed_timeout_ms': config.embed_timeout_ms,
         'startup_timeout_sec': config.startup_timeout_sec, 'max_pins': config.max_pins,
@@ -135,11 +138,13 @@ def main(argv: list[str] | None = None) -> int:
     base = Launcher(config_path=str(config_path), space=space, paths=paths,
                     headless=True, extra_state=extra_state)
     children = base.children
-    if args.agent_log or args.no_mic:
+    if args.agent_log or args.no_mic or args.system_audio:
         runner_extra = ['--agent-log', args.agent_log] if args.agent_log else []
         runner_extra += ['--agent-format', args.agent_format]
         if args.no_mic:
             runner_extra += ['--no-mic']
+        if args.system_audio:
+            runner_extra += ['--system-audio']
         children['runner'] = children['runner'] + runner_extra
     launcher = Launcher(config_path=str(config_path), space=space, paths=paths,
                         headless=args.headless, children=children, extra_state=extra_state)
