@@ -57,14 +57,16 @@ utente**; S2-audio FAIL reale documentato. Distinzioni mantenute ovunque:
 - Smoke reale headless: completo (bootstrap → health → watcher/runner → snapshot →
   suggerimento live → teardown senza orfani).
 
-## Sessione manuale GNOME 2026-10-24 (utente live)
+## Sessione manuale GNOME 2026-10-24 (utente live) — COMPLETATA
 
-Verificato dal vivo: canale testo (f01.md 0.844, canary f05.pdf), pin doppio con
-arco 0.25 simmetrico, aperture xdg-open/evince pag.2/mpv sec.40 coi click, gate
-audio run-3 con voce reale (4/4). **Bug trovati e chiusi**: bottoni Pin/Apri
-(Agent-5: rebuild 100ms), label Mic fissa (Agent-5: mic_label), **soglie default
-al posto della calibrazione in run_poc.py** (Orchestrator: autocarico
-data/calibration.json — le card video erano scartate da min_final 1.0 zscore).
+Percorso PRD verificato end-to-end dal vivo: testo→card (0.844), voce→card
+(gate run-3 4/4), pin doppio + arco 0.25 simmetrico, aperture xdg-open/
+evince pag.2/mpv sec.40 coi click, export OFF completo, export LOCAL con
+trascrizione fedele del WAV utente, pacchetti durevoli. **5 bug chiusi**
+(4 HUD + soglie-calibrazione in run_poc.py), tutti con test.
+Report completo: `docs/evaluation/manual.md` (voci NON eseguite dichiarate:
+sessione agente di lungo corso, show-all, passaggio a LLM esterno).
+
 ## Registro blocker/decisioni (sintesi finale)
 
 1. 2026-10-18 FIX fixture v1.1 (confound voce TTS) dopo run-1 FAIL audio.
