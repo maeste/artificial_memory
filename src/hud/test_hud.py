@@ -596,3 +596,42 @@ class TestTickRebuildsOnlyOnChange:
         assert logic.mic_label() == "Mic: off"
         logic.state.event.sensor_status["mic"] = "error"
         assert logic.mic_label() == "Mic: error"
+
+
+# --------------------------------------------------------------------------- fix toast overlay
+
+
+class TestToastOverlay:
+    def test_export_done_uses_toast_overlay(self):
+        """Il toast va su un parent con add_toast (Adw.ToastOverlay), mai sulla window."""
+        logic, _worker = make_logic()
+        published: list = []
+        logic.Adw = type(
+            "AdwStub",
+            (),
+            {"Toast": type("Toast", (), {"new": staticmethod(lambda message: {"message": message})})},
+        )
+        logic.toast_overlay = type("OverlayStub", (), {"add_toast": lambda self, toast: published.append(toast)})()
+        logic.publish_toast("contesto pronto: 0 warning")
+        assert published == [{"message": "contesto pronto: 0 warning"}]
+
+    def test_export_outcome_reports_path_clipboard_and_warnings(self):
+        from src.contracts import ExportResult
+
+        result = ExportResult(
+            export_dir="/exports/s/e",
+            markdown_path="/exports/s/e/context.md",
+            manifest_path="/exports/s/e/manifest.json",
+            clipboard_status="copied",
+            warnings=["uno", "due"],
+        )
+        toast_message, status_text = app.export_outcome(result, None)
+        assert "2 warning" in toast_message
+        assert "/exports/s/e/context.md" in status_text
+        assert "copied" in status_text
+
+    def test_export_outcome_failure_is_explicit_not_a_fake_success(self):
+        toast_message, status_text = app.export_outcome(None, RuntimeError("boom"))
+        assert toast_message == ""
+        assert "EXPORT_FAILED" in status_text
+        assert "boom" in status_text

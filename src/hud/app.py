@@ -392,6 +392,26 @@ class HudLogic:
         """Hook UI: default solo flag, la finestra lo mappa su un rebuild differito."""
         self._dirty = True
 
+    def publish_toast(self, message: str):
+        """Punto unico di pubblicazione toast: Adw.ToastOverlay, mai la window.
+
+        ApplicationWindow non ha add_toast: senza overlay ogni fine export
+        sollevava AttributeError e l'utente non vedeva mai l'esito.
+        """
+        toast = self.Adw.Toast.new(message)
+        self.toast_overlay.add_toast(toast)
+
+
+def export_outcome(result, error) -> tuple[str, str]:
+    """(messaggio toast, testo pannello di stato) dall'esito dell'export.
+
+    Nessun falso successo: un errore produce toast vuoto e stato esplicito.
+    """
+    if error is not None:
+        return "", f"errore: EXPORT_FAILED: {error}"
+    details = f"{result.markdown_path}\nclipboard: {result.clipboard_status}, warning: {len(result.warnings)}"
+    return f"contesto pronto: {len(result.warnings)} warning — percorso in dettagli", details
+
 
 # --------------------------------------------------------------------------- H4: UI GTK (solo desktop)
 
@@ -478,7 +498,9 @@ class HudWindow(HudLogic):
         self.export_button.connect("clicked", self._on_export)
         export_row.append(self.export_button)
         root.append(export_row)
-        self.window.set_content(root)
+        self.toast_overlay = Adw.ToastOverlay()
+        self.toast_overlay.set_child(root)
+        self.window.set_content(self.toast_overlay)
 
     # ---------------------------------------------------------------- eventi e stato
 
@@ -597,13 +619,10 @@ class HudWindow(HudLogic):
     def _export_done(self, result, error):
         self.export_running = False
         self.export_button.set_sensitive(True)
-        if error is not None:
-            self.show_error(f"EXPORT_FAILED: {error}")
-        else:
-            details = f"{result.markdown_path}\nclipboard: {result.clipboard_status}, warning: {len(result.warnings)}"
-            toast = self.Adw.Toast.new(f"contesto pronto: {len(result.warnings)} warning — percorso in dettagli")
-            self.window.add_toast(toast)
-            self.status_label.set_text(details)
+        toast_message, status_text = export_outcome(result, error)
+        self.status_label.set_text(status_text)
+        if toast_message:
+            self.publish_toast(toast_message)
         self.refresh(_now())
         return False
 
