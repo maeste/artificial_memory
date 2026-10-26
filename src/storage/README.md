@@ -98,6 +98,39 @@ ricircolo, ordinamento final desc, coseno desc, ID crescente, troncato a `top_k`
 `rank(records, query_vec, edges, settings)` resta interno al modulo; i test
 verificano separatamente la matematica pura e i pesi letti dal DB.
 
+## Ricordi di sessione (F3)
+
+Il runner scrive i file di sessione sotto `run_dir/<session>/` e li indicizza con il
+normale `replace_file` (nessuna API di insert dedicata: validazione, mirror vec e
+generazione sono già quelle). Il registry `session_memories` rende quei ricordi
+cercabili come "ricordi di sessione" e cancellabili alla `new_session`:
+
+- `register_session_memories(session_id, entries)` con `entries: Sequence[(memory_id, file_path)]`:
+  transazione piccola, **senza** bump di `index_generation`; idempotente per la stessa
+  sessione, errore `SESSION_MEMORY_CONFLICT` se il ricordo è già di un'altra sessione,
+  `MEMORY_NOT_FOUND` se non ancora indicizzato; il `file_path` deve coincidere con
+  quello indicizzato;
+- `mark_session_memory_promoted(memory_id) -> bool`: True solo alla prima promozione,
+  False se assente o già promosso (idempotente);
+- `get_session_memory(memory_id) -> dict | None`: `{"session_id", "promoted"}` o None;
+- `purge_session_memories(session_id) -> int`: un'unica transazione rimuove i ricordi
+  della sessione (cascade su archi e registry), il mirror vec e le righe `files` dei
+  path di sessione (solo se nessun altro ricordo le referenzia), poi bumpa la
+  generazione; ritorna il numero di ricordi rimossi, 0 per sessione inesistente.
+
+La tabella è additiva: i DB pre-F3 la ricevono alla prima riapertura (`CREATE TABLE
+IF NOT EXISTS` a ogni apertura) senza cancellazioni e senza cambi di schema_version.
+
+## Identità dei path (invariante documentata)
+
+La canonica è `Path.resolve()` — la stessa di `contracts.make_memory_id` (contratti
+07 §3): `replace_file`, `file_hash`, `delete_by_filepath` e il registry canonizzano
+tutti con la stessa regola, quindi le diverse forme di uno stesso path (anche con
+antenati symlink) portano alla stessa identità e alla stessa riga `files`.
+I `file_path` dentro i `MemoryRecord` devono però essere già in forma canonica
+risolta: un record con path non canonico è rifiutato. Test dedicati in
+`test_session.py` documentano l'invariante con e senza symlink.
+
 ## Limiti del PoC
 
 - Ricerca esatta, nessun ANN: le prestazioni su archivi grandi non sono promesse né

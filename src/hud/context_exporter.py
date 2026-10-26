@@ -19,6 +19,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from src.contracts import (
+    AUDIO_SOURCES,
     SCHEMA_VERSION,
     ExportResult,
     ExportSettings,
@@ -85,7 +86,7 @@ def _select_inputs(state: LiveStateEvent, session_inputs: list[LiveInput]) -> tu
     mic_window = [
         item
         for item in session_inputs
-        if item.source == "mic_audio" and item.occurred_at >= state.emitted_at - RECENT_MIC_WINDOW_SEC
+        if item.source in AUDIO_SOURCES and item.occurred_at >= state.emitted_at - RECENT_MIC_WINDOW_SEC
     ]
     selected_ids = {item.id for item in agent_recent} | {item.id for item in mic_window}
     missing: list[str] = []
@@ -122,7 +123,7 @@ def _acquire_audio(
     warnings: list[str] = []
     try:
         for item in selected:
-            if item.source != "mic_audio":
+            if item.source not in AUDIO_SOURCES:
                 continue
             if not item.audio_path or not os.path.isfile(item.audio_path):
                 warnings.append(f"audio {item.id} non disponibile sul runtime: {item.audio_path}")
@@ -420,8 +421,8 @@ def _build_markdown(
     mics = mic_transcripts or {}
     state_lines = ["## Stato recente"]
     for item in recent_inputs:
-        if item.source == "mic_audio":
-            line = f"- `mic_audio` ({item.duration_sec or 0:.1f}s alle {item.occurred_at:.0f})"
+        if item.source in AUDIO_SOURCES:
+            line = f"- `{item.source}` ({item.duration_sec or 0:.1f}s alle {item.occurred_at:.0f})"
             if item.id in mics:
                 line += f" — Trascrizione ASR: {mics[item.id]}"
             state_lines.append(line)
@@ -594,7 +595,7 @@ def _run_transcription(
     for item in selected:
         rel = audio_assets.get(item.id)
         if rel:
-            targets.append((item.id, "mic_audio", rel))
+            targets.append((item.id, item.source, rel))
     ready, detail = (True, "factory di test")
     engine = None
     revision = ""
@@ -675,7 +676,7 @@ def _run_transcription(
         entry_record["transcript"] = transcript_rel
         remaining -= duration
         record["used_sec"] += duration
-        if kind == "mic_audio":
+        if kind in AUDIO_SOURCES:
             mic_transcripts[key] = text
         else:
             clip_transcripts[key] = text
@@ -841,7 +842,7 @@ def _assemble_once(
             {
                 "path": rel,
                 "sha256": hashlib.sha256((staging / rel).read_bytes()).hexdigest(),
-                "kind": "mic_audio",
+                "kind": audio_by_id[input_id].source,
                 "source_path": audio_by_id[input_id].audio_path,
             }
             for input_id, rel in audio_assets.items()
@@ -850,7 +851,7 @@ def _assemble_once(
         clipboard_status, clipboard_warnings = _copy_to_clipboard(markdown)
         warnings.extend(clipboard_warnings)
         mic_status = {
-            item["key"]: item["status"] for item in transcription["per_input"] if item["kind"] == "mic_audio"
+            item["key"]: item["status"] for item in transcription["per_input"] if item["kind"] in AUDIO_SOURCES
         }
         session_context = {
             "session_id": state.session_id,

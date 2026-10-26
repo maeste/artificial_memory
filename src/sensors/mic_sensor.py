@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from src.contracts import LiveInput
+from src.contracts import AUDIO_SOURCES, LiveInput
 
 SAMPLE_RATE = 16000
 BLOCK_SAMPLES = 480  # 30 ms
@@ -35,7 +35,9 @@ MIN_SPEECH_SEC = 0.6
 END_SILENCE_SEC = 0.6
 MAX_SEGMENT_SEC = 12.0
 OVERLAP_SEC = 0.3
-PAREC_ARGS = ('parec', '--rate=16000', '--channels=1', '--format=s16le')
+PAREC_BASE_ARGS = ('parec', '--rate=16000', '--channels=1', '--format=s16le')
+# ATTENZIONE: parec SENZA -d registra il MICROFONO. La cattura di sistema passa
+# sempre un device esplicito (es. @DEFAULT_MONITOR@) via _parec_argv.
 
 
 @dataclass
@@ -173,11 +175,13 @@ def write_wav(path: str, samples: 'np.ndarray') -> None:
 
 
 class MicSensor:
-    """Producer microfono: blocchi PCM → VAD → WAV univoci → LiveInput.
+    """Producer audio: blocchi PCM → VAD → WAV univoci → LiveInput.
 
-    Non attende inferenza: l'output va nella coda limitata del runner
-    (LiveInputQueue). La pausa chiude il segmento pendente con flush
-    controllato; la sorgente testuale resta attiva.
+    Parametrizzato su ``source``/``file_prefix``: mic_audio ('mic-') o
+    system_audio ('sysaudio-') — stessa pipeline VAD/WAV (F1). Non attende
+    inferenza: l'output va nella coda limitata del runner (LiveInputQueue).
+    La pausa chiude il segmento pendente con flush controllato; la sorgente
+    testuale resta attiva.
     """
 
     def __init__(
@@ -187,12 +191,21 @@ class MicSensor:
         session_provider: Callable[[], str],
         clock: Callable[[], float] | None = None,
         segmenter: VadSegmenter | None = None,
+        source: str = 'mic_audio',
+        file_prefix: str = 'mic',
     ):
+        if source not in AUDIO_SOURCES:
+            raise ValueError(
+                f'INVALID_REQUEST: sorgente MicSensor non ammessa: {source!r} '
+                '(mic_audio|system_audio)'
+            )
         self._audio_root = audio_root
         self._session_provider = session_provider
         self._clock = clock if clock is not None else time.time
         self._segmenter = segmenter if segmenter is not None else VadSegmenter()
         self._paused = False
+        self.source = source
+        self.file_prefix = file_prefix
 
     def feed_block(self, block: 'np.ndarray') -> list[LiveInput]:
         """Un blocco da 30 ms: segmentazione e, per ogni segmento, WAV + input."""
@@ -219,12 +232,12 @@ class MicSensor:
         session_id = self._session_provider()
         directory = os.path.join(self._audio_root, session_id)
         os.makedirs(directory, exist_ok=True)
-        path = os.path.join(directory, f'mic-{uuid.uuid4().hex}.wav')
+        path = os.path.join(directory, f'{self.file_prefix}-{uuid.uuid4().hex}.wav')
         write_wav(path, segment.samples)  # il file è chiuso prima di accodare
         return LiveInput(
             id=uuid.uuid4().hex,
             session_id=session_id,
-            source='mic_audio',
+            source=self.source,
             occurred_at=self._clock(),
             audio_path=path,
             duration_sec=segment.duration_sec,
@@ -234,13 +247,17 @@ class MicSensor:
 class AudioCapture:
     """Cattura reale PCM mono 16 kHz: sounddevice, poi parec come fallback.
 
-    Espone ``backend`` e ``device`` effettivi per la diagnostica. Nessun
-    fallback finto: senza backend disponibile solleva RuntimeError.
+    Con ``parec_device`` impostato (es. ``@DEFAULT_MONITOR@``) la cattura è
+    SOLO parec con ``-d <parec_device>``: il ramo sounddevice non è tentato e
+    il microfono non è mai registrato per errore (F1). Espone ``backend`` e
+    ``device`` effettivi per la diagnostica. Nessun fallback finto: senza
+    backend disponibile solleva RuntimeError.
     """
 
-    def __init__(self, on_block: Callable[['np.ndarray'], None], *, device=None):
+    def __init__(self, on_block: Callable[['np.ndarray'], None], *, device=None, parec_device=None):
         self.on_block = on_block
         self.device = device
+        self.parec_device = parec_device
         self.backend: str | None = None
         self.device_label: str | None = None
         self._stream = None
@@ -249,6 +266,13 @@ class AudioCapture:
         self._stopping = threading.Event()
 
     def start(self) -> None:
+        if self.parec_device is not None:
+            if self._try_parec():
+                return
+            raise RuntimeError(
+                f'AUDIO_UNAVAILABLE: parec non disponibile per la cattura di sistema '
+                f'({self.parec_device})'
+            )
         if self._try_sounddevice():
             return
         if self._try_parec():
@@ -256,6 +280,11 @@ class AudioCapture:
         raise RuntimeError(
             'MIC_UNAVAILABLE: nessun backend audio (sounddevice senza PortAudio, parec assente)'
         )
+
+    def _parec_argv(self) -> tuple[str, ...]:
+        if self.parec_device is not None:
+            return PAREC_BASE_ARGS + ('-d', self.parec_device)
+        return PAREC_BASE_ARGS
 
     def _try_sounddevice(self) -> bool:
         try:
@@ -288,17 +317,18 @@ class AudioCapture:
             return False
 
     def _try_parec(self) -> bool:
-        binary = shutil.which(PAREC_ARGS[0])
+        argv = self._parec_argv()
+        binary = shutil.which(argv[0])
         if binary is None:
             return False
         try:
             self._process = subprocess.Popen(  # noqa: S603 — argomenti fissi, senza shell
-                PAREC_ARGS, executable=binary, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+                argv, executable=binary, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
             )
         except OSError:
             return False
         self.backend = 'parec'
-        self.device_label = 'default'
+        self.device_label = self.parec_device if self.parec_device is not None else 'default'
         self._thread = threading.Thread(target=self._read_parec, name='parec-reader', daemon=True)
         self._thread.start()
         return True

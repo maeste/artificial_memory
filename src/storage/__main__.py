@@ -55,7 +55,9 @@ def _decode_manifest(raw: str) -> tuple[SpaceSpec, dict[str, list[MemoryRecord]]
         if not isinstance(item, dict) or set(item) != {"memory", "embedding"}:
             raise ValueError("MANIFEST_INVALIDO: record non conforme al contratto")
         memory_raw = item["memory"]
-        if not isinstance(memory_raw, dict) or set(memory_raw) != view_keys:
+        # sottoinsieme delle chiavi del DTO: i campi additivi con default
+        # (es. session_scope, F3) mancanti sono ammessi nei bank pre-F3
+        if not isinstance(memory_raw, dict) or not set(memory_raw) <= view_keys:
             raise ValueError("MANIFEST_INVALIDO: memory non conforme al contratto")
         record = MemoryRecord(MemoryView(**memory_raw), item["embedding"])
         try:

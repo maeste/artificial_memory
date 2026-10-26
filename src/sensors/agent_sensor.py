@@ -16,7 +16,7 @@ from collections.abc import Callable
 from src.contracts import LiveInput
 
 SOURCE = 'agent_text'
-FORMATS = ('plain', 'claude-jsonl')
+FORMATS = ('plain', 'claude-jsonl', 'codex-jsonl')
 
 ANSI_CSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
 ANSI_OSC = re.compile(r'\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)')
@@ -72,18 +72,53 @@ def _parse_claude_line(line: str) -> str | None:
     return None
 
 
+def _parse_codex_line(line: str) -> str | None:
+    """Riga rollout Codex → testo conversazione; tipi non conversazionali → None.
+
+    Record ``response_item`` con ``payload`` di tipo ``message`` (blocchi
+    ``input_text``/``output_text``), oppure oggetto ``message`` piatto senza
+    wrapper. La semantica malformata è quella di claude-jsonl: riga completa
+    non-JSON → ValueError, altri casi → None.
+    """
+    try:
+        value = json.loads(line)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f'MALFORMED_LINE: riga JSONL non valida: {exc}') from exc
+    if not isinstance(value, dict):
+        return None
+    if value.get('type') not in ('response_item', 'message'):
+        return None  # session_meta, turn_context, event_msg: ignorati
+    payload = value.get('payload')
+    item = payload if isinstance(payload, dict) else value
+    if item.get('type') != 'message':
+        return None  # function_call, reasoning, ecc.
+    content = item.get('content')
+    if not isinstance(content, list):
+        return None
+    parts = []
+    for block in content:
+        if isinstance(block, dict) and block.get('type') in ('input_text', 'output_text'):
+            text = str(block.get('text', '')).strip()
+            if text:
+                parts.append(text)
+    return '\n'.join(parts) or None
+
+
 def parse_agent_line(line: str, format: str) -> str | None:
     """Riga completa → testo utile per la query live, o None se ignorata (§4).
 
     ``plain``: pulizia ANSI/repaint. ``claude-jsonl``: oggetti user/assistant
-    con ``message.content`` stringa o blocchi ``type='text'``. Una riga
+    con ``message.content`` stringa o blocchi ``type='text'``. ``codex-jsonl``:
+    response_item/message con blocchi input_text/output_text. Una riga
     completa malformata solleva ValueError: il tail la segnala e la salta.
     """
     if format == 'plain':
         return _clean_plain(line)
     if format == 'claude-jsonl':
         return _parse_claude_line(line)
-    raise ValueError(f"INVALID_REQUEST: formato non ammesso: {format!r} (plain|claude-jsonl)")
+    if format == 'codex-jsonl':
+        return _parse_codex_line(line)
+    raise ValueError(f"INVALID_REQUEST: formato non ammesso: {format!r} ({'|'.join(FORMATS)})")
 
 
 class AgentLogTail:
@@ -108,7 +143,9 @@ class AgentLogTail:
         start: str = 'end',
     ):
         if format not in FORMATS:
-            raise ValueError(f"INVALID_REQUEST: formato non ammesso: {format!r} (plain|claude-jsonl)")
+            raise ValueError(
+                f"INVALID_REQUEST: formato non ammesso: {format!r} ({'|'.join(FORMATS)})"
+            )
         if start not in ('end', 'beginning'):
             raise ValueError(f'INVALID_REQUEST: avvio non ammesso: {start!r} (end|beginning)')
         self.path = path

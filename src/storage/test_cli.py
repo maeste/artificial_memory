@@ -159,14 +159,37 @@ def test_import_rejects_incoherent_manifest_shapes(tmp_path, capsys):
     assert main(["import", "--db", db, "--manifest", str(tmp_path / "senza_record.json")]) == 1
 
     bad_memory = json.dumps(
-        {"space_spec": asdict(MOCK_SPEC), "records": [{"memory": {"id": "x"}, "embedding": QUERY}]},
+        {
+            "space_spec": asdict(MOCK_SPEC),
+            # chiave estranea: resta non conforme anche dopo F3 (sottoinsieme ammesso)
+            "records": [{"memory": {"id": "x", "session_scope": False, "estraneo": 1},
+                         "embedding": QUERY}],
+        },
         ensure_ascii=False,
     )
     (tmp_path / "memoria_troncata.json").write_text(bad_memory, encoding="utf-8")
     assert main(["import", "--db", db, "--manifest", str(tmp_path / "memoria_troncata.json")]) == 1
 
+    unknown_source = json.dumps(
+        {
+            "space_spec": asdict(MOCK_SPEC),
+            "records": [{"memory": {"id": "x", "file_path": "relativo.md", "modality": "markdown",
+                                    "chunk_key": "k", "content_sha256": "c", "source_sha256": "s",
+                                    "context_header": "", "snippet_text": "", "content_text": ""},
+                         "embedding": QUERY}],
+        },
+        ensure_ascii=False,
+    )
+    (tmp_path / "path_relario.json").write_text(unknown_source, encoding="utf-8")
+    assert main(["import", "--db", db, "--manifest", str(tmp_path / "path_relario.json")]) == 1
+
     assert "MANIFEST_INVALIDO" in capsys.readouterr().err
-    assert not Path(db).exists()
+    # il DB può esistere (apertura prima del parse dei record): la garanzia è
+    # che l'import fallito non abbia scritto NIENTE ricordo.
+    import sqlite3
+
+    count = sqlite3.connect(db).execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+    assert count == 0
 
 
 def test_import_rejects_mixed_source_hashes_per_file(tmp_path, capsys):

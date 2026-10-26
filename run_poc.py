@@ -32,14 +32,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument('--watch-dir', required=True)
     parser.add_argument('--backend', choices=['real', 'mock'], default='real')
     parser.add_argument('--agent-log', default=None)
-    parser.add_argument('--agent-format', choices=['plain', 'claude-jsonl'], default='plain')
+    parser.add_argument('--agent-format', choices=['plain', 'claude-jsonl', 'codex-jsonl'],
+                        default='plain')
+    parser.add_argument('--agent-logs', action='append', default=None, metavar='PATH[:FORMAT]',
+                        help='log agente aggiuntivo (ripetibile; default formato = --agent-format)')
+    parser.add_argument('--auto-last', action='store_true',
+                        help='scopri le ultime sessioni claude/codex per il runner')
     parser.add_argument('--no-mic', action='store_true')
+    parser.add_argument('--system-audio', action='store_true',
+                        help="cattura anche l'audio di sistema (monitor PipeWire)")
     parser.add_argument('--device', choices=['auto', 'cpu', 'cuda'], default='auto')
     parser.add_argument('--db', default=None)
     parser.add_argument('--show-all', action='store_true')
     parser.add_argument('--headless', action='store_true')
     parser.add_argument('--calibration', default=None, help='path data/calibration.json congelata')
     parser.add_argument('--transcription', choices=['off', 'local'], default='off')
+    parser.add_argument('--live-transcription', choices=['off', 'local'], default='off',
+                        help='trascrizione continua dei segmenti audio (default off: audio diretto)')
     parser.add_argument('--asr-model-dir', default=None)
     parser.add_argument('--model-revision', default=None,
                         help='commit HF risolto per il backend real (o data/probe-config.json)')
@@ -79,7 +88,9 @@ def build_search_settings(args: argparse.Namespace, calibration_path: str | None
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    preflight = run_preflight(args.backend, args.transcription, args.asr_model_dir)
+    preflight = run_preflight(args.backend, args.transcription, args.asr_model_dir,
+                              system_audio=args.system_audio,
+                              live_transcription=args.live_transcription)
     if not preflight['ready']:
         print(json.dumps(preflight, indent=2, ensure_ascii=False), file=sys.stderr)
         print('Preflight: requisiti obbligatori mancanti, avvio negato.', file=sys.stderr)
@@ -117,6 +128,7 @@ def main(argv: list[str] | None = None) -> int:
             'min_cosine': config.search.min_cosine, 'min_final': config.search.min_final,
         },
         'device': config.device, 'mic_enabled': config.mic_enabled,
+        'system_audio': args.system_audio,
         'alpha': config.alpha, 'source_ttl_sec': config.source_ttl_sec,
         'command_timeout_ms': config.command_timeout_ms, 'embed_timeout_ms': config.embed_timeout_ms,
         'startup_timeout_sec': config.startup_timeout_sec, 'max_pins': config.max_pins,
@@ -124,7 +136,9 @@ def main(argv: list[str] | None = None) -> int:
         'session_audio_max_bytes': config.session_audio_max_bytes,
         'show_all': args.show_all,
         'agent_log': args.agent_log, 'agent_format': args.agent_format,
+        'agent_logs': args.agent_logs, 'auto_last': args.auto_last,
         'transcription': args.transcription, 'asr_model_dir': args.asr_model_dir,
+        'live_transcription': args.live_transcription, 'asr_language': 'it',
     }, indent=2, ensure_ascii=False), encoding='utf-8')
 
     extra_state = {
@@ -135,11 +149,17 @@ def main(argv: list[str] | None = None) -> int:
     base = Launcher(config_path=str(config_path), space=space, paths=paths,
                     headless=True, extra_state=extra_state)
     children = base.children
-    if args.agent_log or args.no_mic:
+    if args.agent_log or args.no_mic or args.system_audio or args.agent_logs or args.auto_last:
         runner_extra = ['--agent-log', args.agent_log] if args.agent_log else []
         runner_extra += ['--agent-format', args.agent_format]
+        for spec in args.agent_logs or []:
+            runner_extra += ['--agent-logs', spec]
+        if args.auto_last:
+            runner_extra += ['--auto-last']
         if args.no_mic:
             runner_extra += ['--no-mic']
+        if args.system_audio:
+            runner_extra += ['--system-audio']
         children['runner'] = children['runner'] + runner_extra
     launcher = Launcher(config_path=str(config_path), space=space, paths=paths,
                         headless=args.headless, children=children, extra_state=extra_state)

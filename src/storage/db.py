@@ -15,8 +15,10 @@ import os
 import sqlite3
 import struct
 import time
+from collections.abc import Sequence
 from contextlib import closing
 from dataclasses import asdict
+from pathlib import Path
 from typing import Literal
 
 from src.contracts import (
@@ -59,6 +61,21 @@ _SCHEMA_SQL = (
          CHECK(source_id <> target_id)
        )""",
 )
+
+# F3: registry dei ricordi di sessione. Additiva e idempotente: i DB esistenti
+# la ricevono alla prima riapertura senza cancellazioni e senza bump di schema.
+_SESSION_TABLE_SQL = """CREATE TABLE IF NOT EXISTS session_memories(
+     session_id TEXT NOT NULL,
+     memory_id TEXT PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
+     file_path TEXT NOT NULL,
+     promoted INTEGER NOT NULL DEFAULT 0,
+     created_at REAL NOT NULL
+   )"""
+
+
+def _canonical_path(path: str) -> str:
+    """Canonica dei contratti 07 §3: Path.resolve(), la stessa di make_memory_id."""
+    return str(Path(path).resolve())
 
 
 def _load_sqlite_vec(conn: sqlite3.Connection) -> None:
@@ -173,6 +190,7 @@ class BrainStorage:
             except BaseException:
                 self._rollback()
                 raise
+            conn.execute(_SESSION_TABLE_SQL)  # DB nuovo: registry creato subito (idempotente)
             return
 
         meta = dict(conn.execute("SELECT key, value FROM metadata"))
@@ -196,6 +214,10 @@ class BrainStorage:
         }
         if missing:
             raise ValueError(f"SCHEMA_INCOMPATIBLE: tabelle mancanti {sorted(missing)}; serve un nuovo DB")
+
+        # Migrazione additiva F3: eseguita a ogni apertura, idempotente, senza
+        # cancellazioni e senza toccare schema_version né index_generation.
+        conn.execute(_SESSION_TABLE_SQL)
 
     def _create_vec_table(self) -> None:
         self.conn.execute(
@@ -302,7 +324,7 @@ class BrainStorage:
         created_at e gli archi (cascade tocca solo le righe rimosse).
         """
         conn = self._check_open()
-        canonical = os.path.abspath(file_path)
+        canonical = _canonical_path(file_path)
         if not isinstance(records, list):
             raise ValueError("INVALID_REQUEST: records non è una lista")
         for record in records:
@@ -369,7 +391,7 @@ class BrainStorage:
     def file_hash(self, file_path: str) -> str | None:
         """Digest dell'ultima versione indicizzata con successo, o None."""
         conn = self._check_open()
-        row = conn.execute("SELECT sha256 FROM files WHERE file_path = ?", (os.path.abspath(file_path),)).fetchone()
+        row = conn.execute("SELECT sha256 FROM files WHERE file_path = ?", (_canonical_path(file_path),)).fetchone()
         return None if row is None else row[0]
 
     def list_files(self) -> list[str]:
@@ -382,7 +404,7 @@ class BrainStorage:
     def delete_by_filepath(self, file_path: str) -> int:
         """Rimuove il file e i suoi record; gli archi cadono a cascata solo per gli ID rimossi."""
         conn = self._check_open()
-        canonical = os.path.abspath(file_path)
+        canonical = _canonical_path(file_path)
         conn.execute("BEGIN IMMEDIATE")
         try:
             ids = [row[0] for row in conn.execute("SELECT id FROM memories WHERE file_path = ?", (canonical,))]
@@ -393,6 +415,123 @@ class BrainStorage:
             conn.execute("DELETE FROM files WHERE file_path = ?", (canonical,))
             if self.vector_backend_effective == "sqlite_vec":
                 self._vec_write([], ids)
+            self._bump_generation(previous=int(self._read_meta("index_generation")))
+            conn.execute("COMMIT")
+        except BaseException:
+            self._rollback()
+            raise
+        return len(ids)
+
+    # ------------------------------------------------------------------ ricordi di sessione (F3)
+
+    def register_session_memories(self, session_id: str, entries: Sequence[tuple[str, str]]) -> None:
+        """Registra nel registry i ricordi di sessione (memory_id, file_path).
+
+        Transazione piccola, senza bump di index_generation: l'inserimento dei
+        ricordi resta compito di replace_file sul file scritto dal runner sotto
+        run_dir/<session>/. Idempotente per la stessa sessione; un ricordo già
+        registrato per un'altra sessione è un errore (un ricordo, una sessione).
+        """
+        conn = self._check_open()
+        if not isinstance(session_id, str) or not session_id:
+            raise ValueError("INVALID_REQUEST: session_id vuota o non stringa")
+        normalized = []
+        for entry in entries:
+            if not isinstance(entry, tuple) or len(entry) != 2:
+                raise ValueError("INVALID_REQUEST: entry non è una coppia (memory_id, file_path)")
+            memory_id, file_path = entry
+            if not _is_sha256_hex(memory_id):
+                raise ValueError(f"INVALID_REQUEST: memory_id non è un digest sha256: {memory_id!r}")
+            if not isinstance(file_path, str) or not os.path.isabs(file_path):
+                raise ValueError(f"INVALID_REQUEST: file_path non assoluto: {file_path!r}")
+            normalized.append((memory_id, file_path))
+
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            for memory_id, file_path in normalized:
+                registered = conn.execute(
+                    "SELECT session_id, file_path FROM session_memories WHERE memory_id = ?", (memory_id,)
+                ).fetchone()
+                if registered is not None:
+                    if registered[0] != session_id:
+                        raise ValueError(
+                            f"SESSION_MEMORY_CONFLICT: {memory_id} già registrato per la sessione {registered[0]!r}"
+                        )
+                    if registered[1] != file_path:
+                        raise ValueError(f"INVALID_REQUEST: path divergente per {memory_id} già registrato")
+                    continue  # stessa sessione, stessi dati: idempotente
+                indexed = conn.execute("SELECT file_path FROM memories WHERE id = ?", (memory_id,)).fetchone()
+                if indexed is None:
+                    raise ValueError(f"MEMORY_NOT_FOUND: {memory_id} non è nell'archivio")
+                if indexed[0] != file_path:
+                    raise ValueError(
+                        f"INVALID_REQUEST: file_path {file_path!r} non corrisponde a quello indicizzato "
+                        f"per {memory_id} ({indexed[0]!r})"
+                    )
+                conn.execute(
+                    "INSERT INTO session_memories(session_id, memory_id, file_path, promoted, created_at) "
+                    "VALUES (?, ?, ?, 0, ?)",
+                    (session_id, memory_id, file_path, time.time()),
+                )
+            conn.execute("COMMIT")
+        except BaseException:
+            self._rollback()
+            raise
+
+    def mark_session_memory_promoted(self, memory_id: str) -> bool:
+        """True solo alla prima promozione; False se assente o già promosso (idempotente)."""
+        conn = self._check_open()
+        if not _is_sha256_hex(memory_id):
+            raise ValueError(f"INVALID_REQUEST: memory_id non è un digest sha256: {memory_id!r}")
+        cursor = conn.execute(
+            "UPDATE session_memories SET promoted = 1 WHERE memory_id = ? AND promoted = 0", (memory_id,)
+        )
+        return cursor.rowcount == 1
+
+    def get_session_memory(self, memory_id: str) -> dict | None:
+        """Registry del ricordo di sessione: {'session_id', 'promoted'} oppure None."""
+        conn = self._check_open()
+        if not _is_sha256_hex(memory_id):
+            raise ValueError(f"INVALID_REQUEST: memory_id non è un digest sha256: {memory_id!r}")
+        row = conn.execute(
+            "SELECT session_id, promoted FROM session_memories WHERE memory_id = ?", (memory_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return {"session_id": row[0], "promoted": bool(row[1])}
+
+    def purge_session_memories(self, session_id: str) -> int:
+        """Rimuove atomicamente tutti i ricordi di una sessione e ritorna quanti.
+
+        Un'unica transazione: registry → DELETE memories (cascade su archi e
+        registry), mirror vec, righe files dei path della sessione solo se
+        nessun altro ricordo le referenzia, bump di index_generation.
+        Sessione inesistente: 0, nessun cambio.
+        """
+        conn = self._check_open()
+        if not isinstance(session_id, str) or not session_id:
+            raise ValueError("INVALID_REQUEST: session_id vuota o non stringa")
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            rows = conn.execute(
+                "SELECT memory_id, file_path FROM session_memories WHERE session_id = ?", (session_id,)
+            ).fetchall()
+            if not rows:
+                self._rollback()
+                return 0
+            ids = [memory_id for memory_id, _ in rows]
+            paths = sorted({file_path for _, file_path in rows})
+            for memory_id in ids:
+                conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+            if self.vector_backend_effective == "sqlite_vec":
+                self._vec_write([], ids)
+            for path in paths:
+                conn.execute(
+                    "DELETE FROM files WHERE file_path = ? AND NOT EXISTS "
+                    "(SELECT 1 FROM memories WHERE file_path = files.file_path)",
+                    (path,),
+                )
+            conn.execute("DELETE FROM session_memories WHERE session_id = ?", (session_id,))
             self._bump_generation(previous=int(self._read_meta("index_generation")))
             conn.execute("COMMIT")
         except BaseException:

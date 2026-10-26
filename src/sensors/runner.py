@@ -7,6 +7,7 @@ da due thread. Il thread controllo possiede il REP ma non lo stato.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -14,8 +15,9 @@ import sys
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import replace
+from pathlib import Path
 
 from src.config import (
     DEFAULT_ALPHA,
@@ -26,6 +28,7 @@ from src.config import (
     DEFAULT_SOURCE_TTL_SEC,
 )
 from src.contracts import (
+    AUDIO_SOURCES,
     MAX_LATEST_INPUTS,
     MAX_SNAPSHOT_INPUT_IDS,
     SOURCE_VALUES,
@@ -35,21 +38,35 @@ from src.contracts import (
     HudCommand,
     LiveInput,
     LiveStateEvent,
+    MemoryRecord,
+    MemoryView,
     PinnedMemory,
     RuntimePaths,
     ScoredMemory,
     SearchSettings,
     SpaceSpec,
     decode_hud_command,
+    make_memory_id,
     pack,
 )
 from src.sensors.ema_tracker import EMATracker
 
-SOURCE_ORDER = ('agent_text', 'mic_audio')
+SOURCE_ORDER = ('agent_text', 'mic_audio', 'system_audio')
 CANDIDATE_MULTIPLIER = 4  # candidati richiesti a Storage per sorgente (piano L1)
 MAX_COMMAND_CACHE = 256
 DEBUG_SHOW_ALL = 'DEBUG'
 LEASE_SEC = 120.0  # finestra concessa all'HUD dopo new_session (contratti §6)
+# Chiavi di stato per le sorgenti audio nell'evento live (HUD): mic resta 'mic'
+# per compat, la cattura di sistema è 'sysaudio' (F1).
+SENSOR_STATUS_KEYS = {'mic_audio': 'mic', 'system_audio': 'sysaudio'}
+# Etichette di strumento per il front-matter del documento promosso (F3).
+TOOL_LABELS = {
+    'agent_text': 'agente-cli',
+    'mic_audio': 'microfono',
+    'system_audio': 'audio-di-sistema',
+}
+PROMOTION_BEFORE = 5  # input di storia precedenti nel contesto della promozione
+PROMOTION_AFTER = 2  # input successivi
 
 # Ordine canonico delle sorgenti nei pareggi di fusione (contratti §5).
 
@@ -118,6 +135,9 @@ class RunnerService:
         session_audio_max_bytes: int = DEFAULT_SESSION_AUDIO_MAX_BYTES,
         audio_root: str | None = None,
         show_all: bool = False,
+        sensor_enabled: Mapping[str, bool] | None = None,
+        archive_sources: frozenset[str] | None = None,
+        transcriber=None,
     ):
         self.storage = storage
         self.embed_client = embed_client
@@ -148,7 +168,25 @@ class RunnerService:
         self._sequence = 0
         self._sensor_status: dict[str, str] = {}
         self._dropped_inputs = 0
-        self._mic_enabled = True
+        # Stato on/off per sorgente (F1): default tutto attivo, override via
+        # sensor_enabled (es. {'system_audio': False} senza --system-audio).
+        self._enabled: dict[str, bool] = {source: True for source in SOURCE_ORDER}
+        for source, enabled in (sensor_enabled or {}).items():
+            if source not in self._enabled:
+                raise ValueError(f'INVALID_REQUEST: sorgente non ammessa: {source!r}')
+            self._enabled[source] = bool(enabled)
+        # Sorgenti i cui input diventano ricordi di sessione indicizzati (F3):
+        # default vuoto = nessuna archiviazione (comportamento pre-F3).
+        self.archive_sources = frozenset(archive_sources or ())
+        for source in self.archive_sources:
+            if source not in SOURCE_VALUES:
+                raise ValueError(f'INVALID_REQUEST: sorgente non ammessa: {source!r}')
+        # Trascrizione live (F4): oggetto col protocollo .transcribe(wav_path)->str
+        # (LocalTranscriber); None = off, gli input audio restano senza testo.
+        self.transcriber = transcriber
+        # Note esterne persistenti nel sensor_status (es. conteggio tail):
+        # sopravvivono al reset di sessione, a differenza di _sensor_status.
+        self._sensor_notes: dict[str, str] = {}
         self._session_suspended = False
         self._audio_bytes = 0
         self._started_at = self._clock()
@@ -166,12 +204,14 @@ class RunnerService:
         if self._session_full(item):
             self._session_suspended = True
             raise ValueError('SESSION_FULL: limiti di sessione raggiunti, input sospesi')
+        # Trascrizione live sincrona nel worker (F4): il transcript sostituisce
+        # il testo dell'input PRIMA dell'append in storia.
+        item = self._transcribe_live(item)
         # La storia registra l'input PRIMA dell'inferenza: resta esportabile
         # anche se il modello fallisce (piano L1).
         self._history.append(item)
         self._register_audio(item)
-        vector = self._embed(item)
-        if vector is not None:
+        for vector in self._embed_queries(item):
             try:
                 self._trackers[item.source].update(vector)
             except ValueError as exc:
@@ -180,6 +220,15 @@ class RunnerService:
                 self._last_seen[item.source] = self._now()
                 self._sensor_status.pop(f'{item.source}_error', None)
         # Embedding fallito: EMA/last_seen/ranking intatti, solo diagnostica.
+        if item.source in self.archive_sources:
+            # L'archiviazione è solo diagnostica: un fallimento non tocca la pipeline.
+            try:
+                self._index_session_memory(item)
+            except Exception as exc:  # noqa: BLE001 — errore archivio: diagnostica (F3)
+                code = getattr(exc, 'code', None) or str(exc) or type(exc).__name__
+                self._sensor_status['archive_error'] = code
+            else:
+                self._sensor_status.pop('archive_error', None)
         return self._build_event('input')
 
     def status_event(self, reason: str = 'status') -> LiveStateEvent:
@@ -217,6 +266,8 @@ class RunnerService:
             return self._new_session(cmd)
         if cmd.action == 'set_mic':
             return self._set_mic(cmd)
+        if cmd.action == 'promote':
+            return self._promote(cmd)
         return self._error_response(cmd, 'INVALID_REQUEST', f'azione non gestita: {cmd.action}')
 
     def _error_response(self, cmd: HudCommand, code: str, message: str) -> ControlResponse:
@@ -275,6 +326,13 @@ class RunnerService:
 
     def _new_session(self, cmd: HudCommand) -> ControlResponse:
         now = self._now()
+        # Il purge dei ricordi di sessione precede il reset: un fallimento è
+        # STORAGE_ERROR e blocca il reset, senza perdita silenziosa (F3).
+        try:
+            self.storage.purge_session_memories(self.session_id)
+        except Exception as exc:  # noqa: BLE001 — il DB può fallire: reset bloccato
+            return self._error_response(cmd, 'STORAGE_ERROR',
+                                        f'purge ricordi di sessione fallito: {exc}')
         old_audio_dir = self._audio_dir()
         if os.path.isdir(old_audio_dir):
             # Il reset rinvia la rimozione della vecchia directory audio alla
@@ -296,9 +354,153 @@ class RunnerService:
                                lease_expires_at=self._lease_expires_at)
 
     def _set_mic(self, cmd: HudCommand) -> ControlResponse:
-        self._mic_enabled = bool(cmd.enabled)
+        self._enabled['mic_audio'] = bool(cmd.enabled)
         return ControlResponse(command_id=cmd.command_id, success=True,
                                state=self._build_event('status'))
+
+    def _promote(self, cmd: HudCommand) -> ControlResponse:
+        """Promuove un ricordo di sessione a documento di contesto (F3).
+
+        Scrive il documento in watch_dir (front-matter, momento, contesto e
+        WAV allegati) e marca il ricordo come promosso. Idempotente: un
+        ricordo già promosso non viene riscritto. Una memoria fuori registry
+        (ricordo di archivio) è NOT_SESSION_MEMORY.
+        """
+        memory = self.storage.get_memory(cmd.memory_id)
+        if memory is None:
+            return self._error_response(cmd, 'MEMORY_NOT_FOUND', f'memoria assente: {cmd.memory_id}')
+        entry = self.storage.get_session_memory(cmd.memory_id)
+        if entry is None:
+            return self._error_response(cmd, 'NOT_SESSION_MEMORY',
+                                        f'{cmd.memory_id[:12]}… è un ricordo di archivio')
+        if not entry.get('promoted'):
+            try:
+                self._write_promotion(cmd.memory_id, memory)
+            except Exception as exc:  # noqa: BLE001 — documento non scritto: non marcato
+                return self._error_response(cmd, 'PROMOTE_FAILED', f'scritta promozione fallita: {exc}')
+            try:
+                self.storage.mark_session_memory_promoted(cmd.memory_id)
+            except Exception as exc:  # noqa: BLE001 — il DB può fallire
+                return self._error_response(cmd, 'STORAGE_ERROR', f'marca promozione fallita: {exc}')
+        return ControlResponse(command_id=cmd.command_id, success=True,
+                               state=self._build_event('status'))
+
+    def _write_promotion(self, memory_id: str, memory: MemoryView) -> str:
+        """Documento di contesto della promozione in watch_dir (F3).
+
+        Front-matter (sessione/sorgente/strumento), momento completo del
+        ricordo promosso, contesto circostante dalla storia e WAV allegati
+        in assets/. Ritorna il path del documento; qualsiasi errore di
+        scrittura si propaga (il ricordo resta da promuovere).
+        """
+        source_input = self._input_for_session_memory(memory)
+        center_index = (
+            self._history.index(source_input) if source_input is not None else len(self._history) - 1
+        )
+        window = self._history[max(0, center_index - PROMOTION_BEFORE):
+                               min(len(self._history), center_index + PROMOTION_AFTER + 1)]
+        directory = Path(self.paths.watch_dir) / f'promozione-{self.session_id[:8]}-{memory_id[:12]}'
+        assets = directory / 'assets'
+        assets.mkdir(parents=True, exist_ok=True)
+        attachments: list[tuple[LiveInput, str]] = []
+        for item in window:
+            if item.source in AUDIO_SOURCES and item.audio_path and os.path.isfile(item.audio_path):
+                rel = f'assets/{item.id}.wav'
+                shutil.copyfile(item.audio_path, directory / rel)
+                attachments.append((item, rel))
+        sources = sorted({item.source for item in window})
+        tools = sorted({TOOL_LABELS.get(item.source, item.source) for item in window})
+        pin = next((p for p in self._pinned if p.memory.id == memory_id), None)
+        lines = [
+            '---',
+            f'sessione: {self.session_id}',
+            f'sorgente: {", ".join(sources)}',
+            f'strumento: {", ".join(tools)}',
+            f'memory_id: {memory_id}',
+        ]
+        if pin is not None:
+            lines.append(f'pinnato_a: {pin.pinned_at:.0f}')
+        lines += [
+            '---',
+            '',
+            f'# Momento promosso: {memory.context_header}',
+            '',
+            memory.content_text or '(contenuto non testuale)',
+            '',
+            '## Contesto circostante',
+            '',
+        ]
+        for item in window:
+            if item.source in AUDIO_SOURCES:
+                rel = next((rel for attached, rel in attachments if attached.id == item.id), None)
+                line = f'- `{item.source}` ({(item.duration_sec or 0.0):.1f}s alle {item.occurred_at:.0f})'
+                if rel:
+                    line += f' — audio: [{rel}]({rel})'
+                lines.append(line)
+            else:
+                lines.append(f'- `agent_text` {item.text}')
+        path = directory / 'contesto.md'
+        path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+        return str(path)
+
+    def _input_for_session_memory(self, memory: MemoryView) -> LiveInput | None:
+        """L'input di storia che ha generato il ricordo di sessione (F3)."""
+        for item in self._history:
+            if item.source == 'agent_text':
+                if memory.file_path.endswith(f'agent-{item.id}.md'):
+                    return item
+            elif item.audio_path and os.path.realpath(item.audio_path) == os.path.realpath(memory.file_path):
+                return item
+        return None
+
+    def _index_session_memory(self, item: LiveInput) -> str:
+        """Indicizza un input come ricordo di sessione cercabile (F3).
+
+        File reale sotto run_dir/<session>/: il testo agente diventa un .md,
+        l'audio riusa il WAV già scritto dal sensore. Embedding da documento
+        (is_query=False), MemoryView con session_scope=True, poi replace_file
+        e registro di sessione. Gli errori sono del chiamante (diagnostica).
+        """
+        session_dir = os.path.join(self.audio_root, self.session_id)
+        os.makedirs(session_dir, exist_ok=True)
+        if item.source == 'agent_text':
+            file_path = os.path.join(session_dir, f'agent-{item.id}.md')
+            with open(file_path, 'w', encoding='utf-8') as handle:
+                handle.write(f'# Ricordo di sessione\n\n{item.text}\n')
+            text_payload, audio_path = item.text, None
+        else:
+            file_path = item.audio_path or ''
+            if item.text:
+                # transcript disponibile (F4): il documento si embedda dal testo
+                text_payload, audio_path = item.text, None
+            else:
+                text_payload, audio_path = '', item.audio_path
+        request = EmbedRequest(
+            request_id=uuid.uuid4().hex,
+            is_query=False,
+            text_payload=text_payload,
+            audio_path=audio_path,
+        )
+        vector = self.embed_client.embed(request)
+        content_sha = _sha256_file(file_path)
+        canonical = str(Path(file_path).resolve())
+        memory = MemoryView(
+            id=make_memory_id(file_path, f'session:{item.source}', content_sha),
+            file_path=canonical,
+            modality='markdown' if item.source == 'agent_text' else 'audio',
+            chunk_key=f'session:{item.source}',
+            content_sha256=content_sha,
+            source_sha256=content_sha,
+            context_header=f'ricordo di sessione {self.session_id[:8]} ({item.source})',
+            snippet_text=(item.text or f'audio {(item.duration_sec or 0.0):.1f}s')[:350],
+            content_text=item.text or '',
+            created_at=self._now(),
+            session_scope=True,
+        )
+        self.storage.replace_file(file_path, content_sha,
+                                  [MemoryRecord(memory=memory, embedding=vector)])
+        self.storage.register_session_memories(self.session_id, [(memory.id, canonical)])
+        return memory.id
 
     # ------------------------------------------------------------------ interno
 
@@ -312,9 +514,9 @@ class RunnerService:
             raise ValueError('INVALID_REQUEST: session_id vuoto')
         if item.source == 'agent_text' and not item.text:
             raise ValueError('INVALID_REQUEST: input agent_text senza testo')
-        if item.source == 'mic_audio':
+        if item.source in AUDIO_SOURCES:
             if not item.audio_path:
-                raise ValueError('INVALID_REQUEST: input mic_audio senza audio_path')
+                raise ValueError(f'INVALID_REQUEST: input {item.source} senza audio_path')
             if not os.path.isabs(item.audio_path):
                 raise ValueError(f'INVALID_REQUEST: audio_path relativo: {item.audio_path}')
 
@@ -328,30 +530,72 @@ class RunnerService:
         return self._audio_bytes + incoming > self.session_audio_max_bytes
 
     def _register_audio(self, item: LiveInput) -> None:
-        if item.source == 'mic_audio':
+        if item.source in AUDIO_SOURCES:
             self._audio_bytes += self._audio_size(item)
 
     @staticmethod
     def _audio_size(item: LiveInput) -> int:
-        if item.source != 'mic_audio' or not item.audio_path:
+        if item.source not in AUDIO_SOURCES or not item.audio_path:
             return 0
         try:
             return os.path.getsize(item.audio_path)
         except OSError:
             return int((item.duration_sec or 0.0) * 32000)  # PCM 16 kHz mono int16
 
-    def _embed(self, item: LiveInput) -> list[float] | None:
+    def _transcribe_live(self, item: LiveInput) -> LiveInput:
+        """Trascrive un input audio muto se un transcriber è configurato (F4).
+
+        Sincrono nel worker; un fallimento è diagnostica (transcribe_error) e
+        l'input prosegue audio-only. Senza transcriber, per il testo già
+        presente o senza audio_path: nessun cambiamento.
+        """
+        if self.transcriber is None or item.source not in AUDIO_SOURCES or item.text:
+            return item
+        if not item.audio_path:
+            return item
+        try:
+            transcript = str(self.transcriber.transcribe(item.audio_path)).strip()
+        except Exception as exc:  # noqa: BLE001 — l'ASR può fallire: si prosegue audio-only
+            code = getattr(exc, 'code', None) or str(exc) or type(exc).__name__
+            self._sensor_status['transcribe_error'] = code
+            return item
+        if not transcript:
+            return item
+        self._sensor_status.pop('transcribe_error', None)
+        return replace(item, text=transcript)
+
+    def _embed_queries(self, item: LiveInput) -> list[list[float]]:
+        """Vettori query dell'input: audio E testo separati se trascritto (F4).
+
+        Un input audio con transcript produce due query (prima l'audio, poi
+        il testo), ciascuna con il proprio update EMA; i fallimenti sono
+        per-query diagnostica e i vettori riusciti aggiornano comunque l'EMA.
+        """
+        if item.source in AUDIO_SOURCES:
+            queries = [(item.audio_path, '')]
+            if item.text:
+                queries.append((None, item.text))
+        else:
+            queries = [(None, item.text or '')]
+        vectors = []
+        for audio_path, text_payload in queries:
+            vector = self._embed_one(item.source, audio_path=audio_path, text_payload=text_payload)
+            if vector is not None:
+                vectors.append(vector)
+        return vectors
+
+    def _embed_one(self, source: str, *, audio_path: str | None, text_payload: str) -> list[float] | None:
         request = EmbedRequest(
             request_id=uuid.uuid4().hex,
             is_query=True,
-            text_payload=item.text if item.source == 'agent_text' else '',
-            audio_path=item.audio_path if item.source == 'mic_audio' else None,
+            text_payload=text_payload,
+            audio_path=audio_path,
         )
         try:
             return self.embed_client.embed(request)
         except Exception as exc:  # noqa: BLE001 — ogni fallimento inferenza è diagnostica
             code = getattr(exc, 'code', None) or str(exc) or type(exc).__name__
-            self._sensor_status[f'{item.source}_error'] = code
+            self._sensor_status[f'{source}_error'] = code
             return None
 
     def _active_sources(self, now: float) -> list[str]:
@@ -382,7 +626,11 @@ class RunnerService:
         now = self._now()
         self._sequence += 1
         status = dict(self._sensor_status)
-        status['mic'] = 'on' if self._mic_enabled else 'off'
+        status.update(self._sensor_notes)
+        for source in SOURCE_ORDER:
+            key = SENSOR_STATUS_KEYS.get(source)
+            if key is not None:
+                status[key] = 'on' if self._enabled[source] else 'off'
         if self.show_all:
             status['show_all'] = DEBUG_SHOW_ALL
         if self._session_suspended:
@@ -435,9 +683,21 @@ class RunnerService:
         """Il worker registra lo scarto per coda piena (contratti §6)."""
         self._dropped_inputs += 1
 
+    def note_sensor(self, key: str, value: str) -> None:
+        """Annotazione esterna nel sensor_status (es. 'agent_logs': numero tail).
+
+        Sopravvive al reset di sessione; le chiavi per sorgente (mic/sysaudio)
+        restano calcolate dallo stato interno in _build_event.
+        """
+        self._sensor_notes[key] = value
+
+    def sensor_enabled(self, source: str) -> bool:
+        """Stato on/off di una sorgente: i callback di cattura lo consultano."""
+        return self._enabled.get(source, False)
+
     @property
     def mic_enabled(self) -> bool:
-        return self._mic_enabled
+        return self._enabled['mic_audio']  # compat/replay (piano L3)
 
     @property
     def session_suspended(self) -> bool:
@@ -486,11 +746,20 @@ class LiveInputQueue:
 
 def _delete_unreferenced_wav(item: LiveInput) -> None:
     """Elimina il WAV di un input scartato: non referenziato da storia o pin."""
-    if item.source == 'mic_audio' and item.audio_path:
+    if item.source in AUDIO_SOURCES and item.audio_path:
         try:
             os.unlink(item.audio_path)
         except OSError:
             pass
+
+
+def _sha256_file(path: str) -> str:
+    """Digest del contenuto di un file, a blocchi (identità dei ricordi F3)."""
+    digest = hashlib.sha256()
+    with open(path, 'rb') as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 class RunnerServer:
@@ -709,6 +978,51 @@ def build_runtime(config: dict) -> tuple[SpaceSpec, RuntimePaths, SearchSettings
     return space, paths, search
 
 
+def build_log_specs(args, home: str | None = None) -> list[tuple[str, str]]:
+    """Specifiche (path, formato) dei tail agente: PURA e deterministica (F2).
+
+    --agent-log e --agent-logs sono espliciti e vincono su --auto-last in caso
+    di stesso file (dedup su os.path.realpath, primo in ordine CLI). L'entry
+    ``PATH[:FORMAT]`` senza formato usa --agent-format; un formato non ammesso
+    è un errore esplicito prima di aprire qualunque tail.
+    """
+    from src.sensors.agent_discovery import discover_auto_last
+    from src.sensors.agent_sensor import FORMATS
+
+    explicit: list[tuple[str, str]] = []
+    if getattr(args, 'agent_log', None):
+        explicit.append((args.agent_log, args.agent_format))
+    for entry in getattr(args, 'agent_logs', None) or []:
+        path, sep, fmt = entry.partition(':')
+        if sep:
+            if fmt not in FORMATS:
+                raise ValueError(
+                    f"INVALID_REQUEST: formato non ammesso per {path!r}: {fmt!r} "
+                    f"({'|'.join(FORMATS)})"
+                )
+            explicit.append((path, fmt))
+        else:
+            explicit.append((entry, args.agent_format))
+
+    specs: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for path, fmt in explicit:
+        real = os.path.realpath(path)
+        if real in seen:
+            continue
+        seen.add(real)
+        specs.append((path, fmt))
+    if getattr(args, 'auto_last', False):
+        for path, fmt in discover_auto_last(('claude', 'codex'),
+                                            getattr(args, 'project_cwd', None), home):
+            real = os.path.realpath(path)
+            if real in seen:
+                continue
+            seen.add(real)
+            specs.append((path, fmt))
+    return specs
+
+
 def main(argv: list[str] | None = None) -> int:
     """Runner standalone:   python -m src.sensors.runner --config PATH ..."""
     import signal
@@ -717,8 +1031,25 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description='Runner live dei sensori (Agent-4)')
     parser.add_argument('--config', default=None, help='config JSON condiviso (launcher/bootstrap)')
     parser.add_argument('--agent-log', default=None, help='path esplicito del log agente')
-    parser.add_argument('--agent-format', choices=('plain', 'claude-jsonl'), default='plain')
+    parser.add_argument('--agent-format', choices=('plain', 'claude-jsonl', 'codex-jsonl'),
+                        default='plain')
+    parser.add_argument(
+        '--agent-logs', action='append', default=None, metavar='PATH[:FORMAT]',
+        help='log agente aggiuntivo (ripetibile; default formato = --agent-format)',
+    )
+    parser.add_argument(
+        '--auto-last', action='store_true',
+        help='scopri le ultime sessioni claude/codex (dedup sui path espliciti)',
+    )
+    parser.add_argument(
+        '--project-cwd', default=None,
+        help='cwd del progetto per --auto-last (slug ~/.claude/projects)',
+    )
     parser.add_argument('--no-mic', action='store_true', help='disattiva la cattura microfono')
+    parser.add_argument(
+        '--system-audio', action='store_true',
+        help="cattura anche l'audio di sistema (monitor PipeWire via parec -d @DEFAULT_MONITOR@)",
+    )
     parser.add_argument('--show-all', action='store_true', help='salta le soglie visive (DEBUG)')
     parser.add_argument(
         '--replay-log', action='store_true',
@@ -726,6 +1057,23 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     config = load_config(args.config)
+    # La trascrizione live si valida PRIMA di toccare runtime e socket:
+    # una configurazione non disponibile è un exit 2 esplicito, senza mezzi
+    # avvii (F4).
+    live_mode = str(config.get('live_transcription', 'off'))
+    if live_mode not in ('off', 'local'):
+        print(f'runner: live_transcription non ammessa: {live_mode!r} (off|local)', file=sys.stderr)
+        return 2
+    transcriber = None
+    if live_mode == 'local':
+        from src.hud import transcriber as asr
+
+        model_dir = config.get('asr_model_dir')
+        ready, detail = asr.preflight_local(model_dir)
+        if not ready:
+            print(f'runner: trascrizione local non pronta ({detail}); avvio negato', file=sys.stderr)
+            return 2
+        transcriber = asr.LocalTranscriber(str(model_dir), str(config.get('asr_language', 'it')))
     space, paths, search = build_runtime(config)
 
     from src.inference.client import EmbedClient
@@ -743,6 +1091,10 @@ def main(argv: list[str] | None = None) -> int:
         session_max_inputs=int(config.get('session_max_inputs', DEFAULT_SESSION_MAX_INPUTS)),
         session_audio_max_bytes=int(config.get('session_audio_max_bytes', DEFAULT_SESSION_AUDIO_MAX_BYTES)),
         show_all=args.show_all,
+        # Lo status rispecchia la realtà della cattura: --no-mic è 'off' (F2).
+        sensor_enabled={'mic_audio': not args.no_mic, 'system_audio': args.system_audio},
+        archive_sources=frozenset(config.get('archive_sources') or ()),
+        transcriber=transcriber,
     )
     server = RunnerServer(service, command_timeout_sec=config.get('command_timeout_ms', 2000) / 1000)
     server.start()
@@ -754,58 +1106,88 @@ def main(argv: list[str] | None = None) -> int:
 
         server.queue.put(item, on_drop=on_drop)
 
-    tail = None
-    if args.agent_log:
+    tails = []
+    for log_path, log_format in build_log_specs(args):
         from src.sensors.agent_sensor import AgentLogTail
 
         tail = AgentLogTail(
-            args.agent_log, args.agent_format,
+            log_path, log_format,
             session_provider=lambda: service.session_id,
             start='beginning' if args.replay_log else 'end',
         )
-        print(f'runner: tail su {args.agent_log} ({args.agent_format})', file=sys.stderr)
+        tails.append(tail)
+        print(f'runner: tail su {log_path} ({log_format})', file=sys.stderr)
+    if tails:
+        service.note_sensor('agent_logs', str(len(tails)))
 
-    mic = None
-    capture = None
+    captures = []
 
-    def on_audio_block(block) -> None:
-        if service.mic_enabled and not service.session_suspended:
-            for item in mic.feed_block(block):
-                enqueue(item)
-        else:
-            for item in mic.flush():  # pausa: flush controllato, il testo resta attivo
-                enqueue(item)
+    def make_audio_callback(sensor, enabled: bool) -> Callable[[object], None]:
+        """Callback speculare per ogni sorgente audio: attiva → feed, pausa → flush.
 
-    if not args.no_mic:
+        ``enabled`` è lo stato di cattura della sorgente al momento dell'avvio
+        (service.sensor_enabled(source)); il toggle a runtime passa dal flush
+        controllato del sensore, non da qui."""
+
+        def on_block(block) -> None:
+            if enabled and not service.session_suspended:
+                for item in sensor.feed_block(block):
+                    enqueue(item)
+            else:
+                for item in sensor.flush():  # pausa: flush controllato, il testo resta attivo
+                    enqueue(item)
+
+        return on_block
+
+    def run_capture(capture_obj, label: str) -> None:
+        try:
+            capture_obj.start()  # blocca nel thread dedicato finché non si ferma
+        except Exception as exc:  # noqa: BLE001 — niente fallback finto: errore chiaro
+            print(f'runner: {label} non disponibile ({exc}); solo sorgente testuale',
+                  file=sys.stderr)
+
+    if not args.no_mic or args.system_audio:
         from src.sensors.mic_sensor import AudioCapture, MicSensor
 
+    if not args.no_mic:
         mic = MicSensor(audio_root=paths.run_dir, session_provider=lambda: service.session_id)
-        capture = AudioCapture(on_audio_block)
+        mic_capture = AudioCapture(make_audio_callback(mic, service.sensor_enabled('mic_audio')))
+        captures.append(mic_capture)
+        threading.Thread(target=run_capture, args=(mic_capture, 'microfono'),
+                         name='mic-capture', daemon=True).start()
 
-        def run_capture() -> None:
-            try:
-                capture.start()  # blocca nel thread dedicato finché non si ferma
-            except Exception as exc:  # noqa: BLE001 — niente fallback finto: errore chiaro
-                print(f'runner: microfono non disponibile ({exc}); solo sorgente testuale', file=sys.stderr)
-
-        threading.Thread(target=run_capture, name='mic-capture', daemon=True).start()
+    if args.system_audio:
+        sysaudio = MicSensor(
+            source='system_audio', file_prefix='sysaudio',
+            audio_root=paths.run_dir, session_provider=lambda: service.session_id,
+        )
+        # @DEFAULT_MONITOR@: l'output del desktop, MAI il microfono (parec senza
+        # -d registra il mic: il device è sempre esplicito qui).
+        sys_capture = AudioCapture(
+            make_audio_callback(sysaudio, service.sensor_enabled('system_audio')),
+            parec_device='@DEFAULT_MONITOR@',
+        )
+        captures.append(sys_capture)
+        threading.Thread(target=run_capture, args=(sys_capture, "cattura audio di sistema"),
+                         name='sysaudio-capture', daemon=True).start()
 
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     print(f'runner: sessione {service.session_id[:8]}… eventi su {paths.events_endpoint}', file=sys.stderr)
     try:
         while True:
             time.sleep(0.05)
-            if tail is not None:
+            for tail in tails:
                 item = tail.poll()
                 if item is not None:
                     enqueue(item)
     except (KeyboardInterrupt, SystemExit):
         pass
     finally:
-        print(f'runner: arresto; diagnostica tail: {tail.diagnostics if tail else "n/d"}', file=sys.stderr)
+        diagnostics = '; '.join(f'{tail.path}: {tail.diagnostics}' for tail in tails) or 'n/d'
+        print(f'runner: arresto; diagnostica tail: {diagnostics}', file=sys.stderr)
         server.close()
-        if capture is not None:
-            capture.stop()
+        for capture_obj in captures:
+            capture_obj.stop()
         client.close()
         storage.close()
     return 0

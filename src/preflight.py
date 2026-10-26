@@ -84,7 +84,22 @@ def _check_asr(asr_model_dir: str | None) -> tuple[bool, str]:
     return True, f'ASR locale pronta in {asr_model_dir}'
 
 
-def run_preflight(backend: str, transcription: str, asr_model_dir: str | None) -> dict:
+def _check_system_audio() -> tuple[bool, str]:
+    """Il monitor PipeWire è raggiungibile? Warn-only: in sandbox Connection refused."""
+    if shutil.which('pactl') is None:
+        return False, 'pactl non trovato'
+    try:
+        result = subprocess.run(['pactl', 'list', 'short', 'sinks'], capture_output=True, timeout=5)
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return False, f'non verificabile: {exc}'
+    if result.returncode == 0 and result.stdout.strip():
+        sinks = result.stdout.decode(errors='replace').strip().splitlines()
+        return True, f'{len(sinks)} sink trovati (monitor catturabile)'
+    return False, f'non verificabile senza sessione utente: {result.stderr.decode(errors="replace")[:80]}'
+
+
+def run_preflight(backend: str, transcription: str, asr_model_dir: str | None,
+                  *, system_audio: bool = False, live_transcription: str = 'off') -> dict:
     checks = []
 
     def add(check_id: str, mandatory: bool, ok: bool, detail: str, fix: str) -> None:
@@ -129,11 +144,22 @@ def run_preflight(backend: str, transcription: str, asr_model_dir: str | None) -
         detail = f'PortAudio assente, fallback parec: {detail}'
     add('mic:capture', False, ok, detail, 'sudo dnf install -y portaudio o pipewire-utils (parec)')
 
+    if system_audio:
+        ok, detail = _check_system_audio()
+        add('system-audio:monitor', False, ok, detail,
+            'verificare nel desktop (pactl list short sinks); mai bloccante qui')
+
     if transcription == 'local':
         ok, detail = _check_asr(asr_model_dir)
         add('asr:local', True, ok, detail, 'uv sync --extra asr e preparazione modello esplicita')
     else:
         add('asr:not-required', False, True, 'transcription=off: nessun modello ASR richiesto', '')
+
+    if live_transcription == 'local':
+        ok, detail = _check_asr(asr_model_dir)
+        add('asr:live', True, ok, detail, 'uv sync --extra asr e preparazione modello esplicita')
+    else:
+        add('asr:live-not-required', False, True, 'live_transcription=off: audio diretto all encoder', '')
 
     free = shutil.disk_usage(os.path.expanduser('~')).free
     add('disk:free', False, free > 20 * 1024**3, f'{free / 1024**3:.1f} GiB liberi nella home',
@@ -155,8 +181,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--backend', choices=['real', 'mock'], default='real')
     parser.add_argument('--transcription', choices=['off', 'local'], default='off')
     parser.add_argument('--asr-model-dir', default=None)
+    parser.add_argument('--system-audio', action='store_true')
+    parser.add_argument('--live-transcription', choices=['off', 'local'], default='off')
     args = parser.parse_args(argv)
-    report = run_preflight(args.backend, args.transcription, args.asr_model_dir)
+    report = run_preflight(args.backend, args.transcription, args.asr_model_dir,
+                           system_audio=args.system_audio,
+                           live_transcription=args.live_transcription)
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 2 if not report['ready'] else 0
 

@@ -8,13 +8,14 @@ contratti [07_TECHNICAL_CONTRACTS](../../untracked_doc/07_TECHNICAL_CONTRACTS.md
 | File | Responsabilità |
 |---|---|
 | `ema_tracker.py` | `EMATracker`: una EMA normalizzata per sorgente, validazione vettori, reset |
-| `agent_sensor.py` | `parse_agent_line` (plain / claude-jsonl) e `AgentLogTail`: tail incrementale, ANSI/repaint, debounce, rotazione/troncamento |
-| `mic_sensor.py` | `VadSegmenter` (RMS, calibrazione 1 s), `MicSensor` (WAV univoci), `AudioCapture` (sounddevice → parec) |
+| `agent_sensor.py` | `parse_agent_line` (plain / claude-jsonl / codex-jsonl) e `AgentLogTail`: tail incrementale, ANSI/repaint, debounce, rotazione/troncamento |
+| `agent_discovery.py` | Scoperta dell'ultimo log agente (claude/codex) per `--auto-last`: solo filesystem, mai eccezioni per directory assenti |
+| `mic_sensor.py` | `VadSegmenter` (RMS, calibrazione 1 s), `MicSensor` (WAV univoci, sorgente/prefisso parametrici), `AudioCapture` (sounddevice → parec, `parec_device` per il monitor di sistema) |
 | `session.py` | *vedi nota:* la logica di sessione vive in `runner.py` (`RunnerService`) |
-| `runner.py` | `combine_results` (fusione), `RunnerService` (stato/pin/comandi), `LiveInputQueue`, `RunnerServer` (PUB/REP/worker), CLI |
+| `runner.py` | `combine_results` (fusione), `RunnerService` (stato/pin/comandi/ricordi di sessione/promozioni), `LiveInputQueue`, `RunnerServer` (PUB/REP/worker), `build_log_specs`, CLI |
 | `replay.py` | `ReplayHarness`: valutazione sui producer e worker reali, CLI |
 | `fakes.py` | Fake deterministici dei contratti §4 per i test (Storage/Inference reali arrivati dopo: integrati nel wiring CLI) |
-| `test_sensors.py`, `test_session.py` | Test L1–L4, nessun hardware richiesto |
+| `test_sensors.py`, `test_session.py`, `test_discovery.py` | Test L1–L4 ed enhancement F1–F4, nessun hardware richiesto |
 
 Nota deviazione: il piano prevedeva `session.py` separato; la logica di sessione
 (storia, limiti, pin, lease, reset) è dentro `RunnerService` in `runner.py` perché
@@ -37,7 +38,9 @@ Runner live (come lo avvia `src/launcher.py`):
 ```bash
 uv run python -m src.sensors.runner --config data/config.json \
   --agent-log /percorso/assoluto/session.log --agent-format plain
-# opzioni: --no-mic, --show-all (salta soglie, DEBUG), --replay-log (fixture: leggi dall'inizio)
+# opzioni: --no-mic, --system-audio, --agent-logs PATH[:FORMAT] (ripetibile),
+# --auto-last, --project-cwd, --show-all (salta soglie, DEBUG), --replay-log
+# (fixture: leggi dall'inizio); --agent-format ammette plain|claude-jsonl|codex-jsonl
 ```
 
 Replay di valutazione (consumato da `scripts/evaluate.py`):
@@ -138,14 +141,83 @@ controllato del segmento pendente; la sorgente testuale resta attiva.
 - Eventi PUB: snapshot completi con `source_last_seen` e `dropped_inputs`;
   heartbeat e `index_generation()` ogni 2 s best effort fra richieste.
 
+## Enhancement F1–F4 (2026-10-25, branch enhancement/multi-agent-system-audio)
+
+### F1 — `system_audio`, terza sorgente audio (query-only)
+
+- Flag `--system-audio` (runner e `run_poc.py`): attiva un secondo `MicSensor`
+  (source `system_audio`, file `sysaudio-*.wav`) alimentato dalla cattura del
+  monitor desktop via `AudioCapture(parec_device='@DEFAULT_MONITOR@')` nel
+  thread `sysaudio-capture`.
+- **Attenzione**: `parec` SENZA `-d` registra il microfono. La cattura di
+  sistema passa sempre un device esplicito (`-d <device>`), salta il ramo
+  sounddevice e usa il codice d'errore `AUDIO_UNAVAILABLE` se `parec` manca.
+- Stato per sorgente nell'evento live: `mic` (chiave storica, HUD invariato) e
+  `sysaudio`; `--no-mic` riflette `off` nello status (lo stato rispecchia la
+  realtà della cattura). Il comando `set_mic` non tocca `sysaudio`.
+- Config: chiave `system_audio`; budget `session_audio_max_bytes` combinato su
+  mic+system; pulizia WAV dei drop estesa a entrambe le sorgenti. La verifica
+  PipeWire dal vivo non è automatizzabile in sandbox: resta in checklist utente.
+
+### F2 — multi-log agenti
+
+- `--agent-logs PATH[:FORMAT]` (ripetibile; formato predefinito = `--agent-format`),
+  `--auto-last` con `--project-cwd`: scoperta dell'ultima sessione claude
+  (`~/.claude/projects/<slug cwd>/*.jsonl`, slug = cwd con `/`→`-`) e codex
+  (`~/.codex/sessions/**/rollout-*.jsonl`), la più recente per mtime vince;
+  mai eccezioni per directory assenti.
+- Dedup su `os.path.realpath`: gli espliciti (in ordine CLI) vincono sulle
+  scoperte; `--auto-last` è additivo. Discovery del log **live** della sessione
+  corrente = voluto (caso d'uso ambient); il tail parte dal fondo.
+- Nuovo formato `codex-jsonl` (record `response_item`/`message` con blocchi
+  `input_text`/`output_text`); stessa semantica MALFORMED di `claude-jsonl`.
+  Un tail per file, `session_provider` condiviso, poll in sequenza;
+  `sensor_status['agent_logs']` = numero di tail (sopravvive a `new_session`),
+  path di ogni tail in stderr.
+
+### F3 — ricordi di sessione e promozione
+
+- `archive_sources` (config, default vuoto): gli input di quelle sorgenti
+  vengono indicizzati come ricordi di sessione cercabili — file reali sotto
+  `run_dir/<session>/` (testo → `agent-<input_id>.md`, audio → il WAV del
+  sensore), embedding `is_query=False`, `MemoryView.session_scope=True`,
+  `replace_file` + registro `session_memories` di Storage. Errori di
+  archiviazione = solo diagnostica (`sensor_status['archive_error']`).
+- `new_session`: purge dei ricordi di sessione **prima** del reset; un
+  fallimento risponde `STORAGE_ERROR` e blocca il reset (retry pulito).
+- Azione `promote`: scrive il documento di contesto in
+  `watch_dir/promozione-<sessione>-<memoria>/contesto.md` (front-matter
+  sessione/sorgente/strumento, momento completo, contesto circostante dalla
+  storia, WAV in `assets/`) e marca il ricordo come promosso. Idempotente;
+  `NOT_SESSION_MEMORY` su ricordi di archivio, `PROMOTE_FAILED` se la scrittura
+  fallisce (resta promuovibile). L'ingestion indicizza il documento promosso
+  come memoria permanente (i `.wav` non sono tra i suffissi ingeriti).
+
+### F4 — trascrizione live (default off)
+
+- Config `live_transcription: off|local` (+ `asr_model_dir`, `asr_language`
+  default `it`): con `local` un input audio senza testo viene trascritto in
+  modo sincrono nel worker (`LocalTranscriber` di `src/hud/transcriber.py`);
+  il transcript entra nella storia via `dataclasses.replace` prima dell'append.
+- Modalità non ammessa o modello `local` non pronto → **exit 2 esplicito**
+  prima di toccare runtime e socket. Errore ASR a runtime →
+  `sensor_status['transcribe_error']` e l'input prosegue audio-only.
+- Con transcript un input audio produce **due query** (audio, poi testo) con
+  doppio update EMA sulla sorgente: con `alpha=1` vince il testo. Il ricordo di
+  sessione trascritto si embedda dal testo (`content_text` = transcript).
+  Default `off`: comportamento storico, identico al pre-F4.
+
 ## Retention e limiti
 
 - WAV live e messaggi di sessione vivono in `<run_dir>/<session_id>/`; reset o
   arresto li eliminano (la rimozione post-reset attende il lease di 120 s).
 - Coda input: massimo 8; quando piena scarta il più vecchio, incrementa
   `dropped_inputs` ed elimina il suo WAV non referenziato.
-- Nessun ASR nel percorso live; i WAV nativi sono query. Nessuna indicizzazione
-  automatica del live nell'archivio.
+- Default (`live_transcription` off): nessun ASR nel percorso live, i WAV
+  nativi sono query; con `local` il percorso include ASR sincrono (F4). Senza
+  `archive_sources` non c'è indicizzazione del live nell'archivio; con
+  `archive_sources` gli input di quelle sorgenti diventano ricordi di sessione,
+  purgati alla `new_session` salvo promozione (F3).
 - La CLI `--replay-log` è diagnostica: legge un log-fixture dall'inizio.
 - Il tokenizer del replay è il loader condiviso dell'Ingestion
   (`src.ingestion.watcher.load_tokenizer`: mock a caratteri, reale via

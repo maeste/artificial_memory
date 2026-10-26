@@ -49,6 +49,11 @@ def mic_input(path: str, duration: float = 1.0, session: str = 's1', at: float =
                      occurred_at=at, audio_path=path, duration_sec=duration)
 
 
+def sysaudio_input(path: str, duration: float = 1.0, session: str = 's1', at: float = 1000.0) -> LiveInput:
+    return LiveInput(id=f'in-{digest(path)[:12]}', session_id=session, source='system_audio',
+                     occurred_at=at, audio_path=path, duration_sec=duration)
+
+
 def snapshot_cmd(command_id: str = 'cmd-snap', session_id: str | None = None) -> HudCommand:
     return HudCommand(command_id=command_id, session_id=session_id, action='snapshot')
 
@@ -56,7 +61,7 @@ def snapshot_cmd(command_id: str = 'cmd-snap', session_id: str | None = None) ->
 class RunnerHarness:
     """RunnerService con fake, clock controllato e alpha=1 (EMA = ultimo vettore)."""
 
-    def __init__(self, tmp_path, storage=None, client=None, clock=None, settings=None, **kwargs):
+    def __init__(self, tmp_path, storage=None, client=None, clock=None, settings=None, alpha: float = 1.0, **kwargs):
         import os
 
         from src.contracts import RuntimePaths
@@ -82,7 +87,7 @@ class RunnerHarness:
         self.settings = settings if settings is not None else SearchSettings()
         self.service = RunnerService(
             self.storage, self.client, self.paths, self.settings,
-            clock=self.clock.time, alpha=1.0, **kwargs,
+            clock=self.clock.time, alpha=alpha, **kwargs,
         )
 
     def ingest_text(self, text: str, **kwargs):
@@ -91,6 +96,11 @@ class RunnerHarness:
     def ingest_mic(self, name: str, duration: float = 1.0, **kwargs):
         return self.service.ingest(
             mic_input(self.mic_path(name), duration=duration, session=self.service.session_id, **kwargs)
+        )
+
+    def ingest_sysaudio(self, name: str, duration: float = 1.0, **kwargs):
+        return self.service.ingest(
+            sysaudio_input(self.mic_path(name), duration=duration, session=self.service.session_id, **kwargs)
         )
 
     def mic_path(self, name: str) -> str:
@@ -411,6 +421,107 @@ class TestFusion:
 # --------------------------------------------------------------------------- L2: sensore agente
 
 
+class TestThreeSources:
+    """F1: system_audio come terza sorgente audio (query-only)."""
+
+    def test_tie_three_sources_prefers_agent_text(self, tmp_path):
+        harness = RunnerHarness(tmp_path)
+        mem = make_memory(tmp_path, 'f07.md')
+        same = unit([1.0] + [0.0] * 255)
+        harness.storage.add(mem, same)
+        harness.client.vectors['tripla'] = same
+        harness.client.vectors[harness.mic_path('mic-t.wav')] = same
+        harness.client.vectors[harness.mic_path('sys-t.wav')] = same
+
+        harness.ingest_text('tripla')
+        harness.ingest_mic('mic-t.wav')
+        event = harness.ingest_sysaudio('sys-t.wav')
+        merged = event.results[0]
+        assert merged.winning_source == 'agent_text'
+        # ordine canonico nei pareggi (SOURCE_ORDER): agent → mic → system
+        assert merged.matched_sources == ['agent_text', 'mic_audio', 'system_audio']
+
+    def test_system_audio_wins_when_higher_score(self, tmp_path):
+        harness = RunnerHarness(tmp_path)
+        mem = make_memory(tmp_path, 'f08.md')
+        text_vec = unit([1.0, 0.0] + [0.0] * 254)
+        mem_vec = unit([0.0, 1.0] + [0.0] * 254)
+        sys_vec = unit([math.sqrt(0.5), math.sqrt(0.5)] + [0.0] * 254)
+        harness.storage.add(mem, mem_vec)
+        harness.client.vectors['generico sys'] = text_vec
+        harness.client.vectors[harness.mic_path('sys-win.wav')] = sys_vec
+
+        harness.ingest_text('generico sys')
+        event = harness.ingest_sysaudio('sys-win.wav')
+        merged = event.results[0]
+        assert merged.winning_source == 'system_audio'
+        assert merged.matched_sources == ['agent_text', 'system_audio']
+
+    def test_ema_isolated_across_three_sources(self, tmp_path):
+        storage = FakeStorage()
+        harness = RunnerHarness(tmp_path, storage=storage)
+        text_vec = unit([1.0] + [0.0] * 255)
+        mic_vec = unit([0.0, 1.0] + [0.0] * 254)
+        sys_vec = unit([0.0, 0.0, 1.0] + [0.0] * 253)
+        harness.client.vectors['testo tre'] = text_vec
+        harness.client.vectors[harness.mic_path('mic-tre.wav')] = mic_vec
+        harness.client.vectors[harness.mic_path('sys-tre.wav')] = sys_vec
+
+        harness.ingest_text('testo tre')
+        harness.ingest_mic('mic-tre.wav')
+        harness.ingest_sysaudio('sys-tre.wav')
+
+        assert set(harness.service._last_seen) == {'agent_text', 'mic_audio', 'system_audio'}
+        # l'ultimo giro di ricerca interroga una EMA per sorgente, senza contamini
+        later = [tuple(vec) for vec, _ in storage.search_calls[-3:]]
+        assert tuple(text_vec) in later
+        assert tuple(mic_vec) in later
+        assert tuple(sys_vec) in later
+
+
+class TestEmbedRouting:
+    """F1: _embed passa audio_path per OGNI sorgente audio (via FakeEmbedClient.requests)."""
+
+    def test_mic_routes_audio_path(self, tmp_path):
+        harness = RunnerHarness(tmp_path)
+        harness.ingest_mic('voce-r.wav')
+        req = harness.client.requests[-1]
+        assert req.audio_path == harness.mic_path('voce-r.wav')
+        assert req.text_payload == ''
+        assert req.is_query is True
+
+    def test_system_audio_routes_audio_path(self, tmp_path):
+        harness = RunnerHarness(tmp_path)
+        harness.ingest_sysaudio('sys-r.wav')
+        req = harness.client.requests[-1]
+        assert req.audio_path == harness.mic_path('sys-r.wav')
+        assert req.text_payload == ''
+        assert req.is_query is True
+
+    def test_agent_text_routes_no_audio(self, tmp_path):
+        harness = RunnerHarness(tmp_path)
+        harness.ingest_text('solo testo')
+        req = harness.client.requests[-1]
+        assert req.audio_path is None
+        assert req.text_payload == 'solo testo'
+
+    @pytest.mark.parametrize('source', ['mic_audio', 'system_audio'])
+    def test_audio_source_without_path_rejected(self, tmp_path, source):
+        harness = RunnerHarness(tmp_path)
+        item = LiveInput(id='in-x', session_id=harness.service.session_id,
+                         source=source, occurred_at=1000.0)
+        with pytest.raises(ValueError, match=f'{source} senza audio_path'):
+            harness.service.ingest(item)
+
+    @pytest.mark.parametrize('source', ['mic_audio', 'system_audio'])
+    def test_audio_source_relative_path_rejected(self, tmp_path, source):
+        harness = RunnerHarness(tmp_path)
+        item = LiveInput(id='in-y', session_id=harness.service.session_id,
+                         source=source, occurred_at=1000.0, audio_path='rel.wav')
+        with pytest.raises(ValueError, match='audio_path relativo'):
+            harness.service.ingest(item)
+
+
 class TestParseAgentLine:
     def test_plain_strips_ansi_csi(self):
         from src.sensors.agent_sensor import parse_agent_line
@@ -489,6 +600,77 @@ class TestParseAgentLine:
 
         with pytest.raises(ValueError, match='MALFORMED'):
             parse_agent_line('{"type":"user", broken', 'claude-jsonl')
+
+
+class TestParseCodexLine:
+    """F2: rollout Codex — response_item/message con blocchi input_text/output_text."""
+
+    def test_user_input_text(self):
+        from src.sensors.agent_sensor import parse_agent_line
+
+        line = ('{"timestamp":"2026-10-25T10:00:00.000Z","type":"response_item",'
+                '"payload":{"type":"message","role":"user",'
+                '"content":[{"type":"input_text","text":"come ottimizzo la cache?"}]}}')
+        assert parse_agent_line(line, 'codex-jsonl') == 'come ottimizzo la cache?'
+
+    def test_assistant_output_text(self):
+        from src.sensors.agent_sensor import parse_agent_line
+
+        line = ('{"type":"response_item","payload":{"type":"message","role":"assistant",'
+                '"content":[{"type":"output_text","text":"La cache riduce i tempi."}]}}')
+        assert parse_agent_line(line, 'codex-jsonl') == 'La cache riduce i tempi.'
+
+    def test_multiple_blocks_joined(self):
+        from src.sensors.agent_sensor import parse_agent_line
+
+        line = ('{"type":"response_item","payload":{"type":"message","role":"assistant",'
+                '"content":[{"type":"output_text","text":"prima parte."},'
+                '{"type":"output_text","text":"seconda parte."}]}}')
+        assert parse_agent_line(line, 'codex-jsonl') == 'prima parte.\nseconda parte.'
+
+    def test_ignores_other_types_and_payload_kinds(self):
+        from src.sensors.agent_sensor import parse_agent_line
+
+        assert parse_agent_line('{"type":"session_meta","payload":{"id":"x"}}', 'codex-jsonl') is None
+        assert parse_agent_line('{"type":"turn_context","payload":{"cwd":"/x"}}', 'codex-jsonl') is None
+        assert parse_agent_line('{"type":"event_msg","payload":{"type":"agent_message"}}', 'codex-jsonl') is None
+        assert parse_agent_line(
+            '{"type":"response_item","payload":{"type":"function_call","name":"Bash"}}', 'codex-jsonl'
+        ) is None
+        assert parse_agent_line(
+            '{"type":"response_item","payload":{"type":"reasoning","summary":[]}}', 'codex-jsonl'
+        ) is None
+
+    def test_flat_message_line_accepted(self):
+        from src.sensors.agent_sensor import parse_agent_line
+
+        line = ('{"type":"message","role":"user",'
+                '"content":[{"type":"input_text","text":"senza payload wrapper"}]}')
+        assert parse_agent_line(line, 'codex-jsonl') == 'senza payload wrapper'
+
+    def test_empty_or_missing_content_is_none(self):
+        from src.sensors.agent_sensor import parse_agent_line
+
+        assert parse_agent_line('{"type":"response_item","payload":{"type":"message"}}', 'codex-jsonl') is None
+        assert parse_agent_line(
+            '{"type":"response_item","payload":{"type":"message","content":[]}}', 'codex-jsonl'
+        ) is None
+        assert parse_agent_line(
+            '{"type":"response_item","payload":{"type":"message",'
+            '"content":[{"type":"input_text","text":"   "}]}}', 'codex-jsonl'
+        ) is None
+
+    def test_non_dict_is_none(self):
+        from src.sensors.agent_sensor import parse_agent_line
+
+        assert parse_agent_line('[1, 2, 3]', 'codex-jsonl') is None
+        assert parse_agent_line('"solo stringa"', 'codex-jsonl') is None
+
+    def test_malformed_complete_line_raises(self):
+        from src.sensors.agent_sensor import parse_agent_line
+
+        with pytest.raises(ValueError, match='MALFORMED'):
+            parse_agent_line('{"type":"response_item", rotta', 'codex-jsonl')
 
 
 class TestAgentLogTail:
@@ -811,6 +993,110 @@ class TestMicSensor:
             inputs.extend(sensor.feed_block(block))
         assert inputs == []
 
+    def test_system_audio_source_and_prefix(self, tmp_path):
+        clock = FakeClock()
+        sensor = self._sensor(tmp_path, clock, source='system_audio', file_prefix='sysaudio')
+        inputs = []
+        for block in pcm_blocks(1.0, 0) + pcm_blocks(1.5, 3000) + pcm_blocks(0.7, 0):
+            inputs.extend(sensor.feed_block(block))
+        assert len(inputs) == 1
+        assert inputs[0].source == 'system_audio'
+        name = Path(inputs[0].audio_path).name
+        assert name.startswith('sysaudio-') and name.endswith('.wav')
+        assert str(tmp_path / 'runtime' / 'sess-live') in inputs[0].audio_path
+
+    def test_default_params_unchanged(self, tmp_path):
+        """Regressione F1: i default restano mic_audio/'mic-' (replay e runner mic)."""
+        clock = FakeClock()
+        sensor = self._sensor(tmp_path, clock)
+        inputs = []
+        for block in pcm_blocks(1.0, 0) + pcm_blocks(1.5, 3000) + pcm_blocks(0.7, 0):
+            inputs.extend(sensor.feed_block(block))
+        assert len(inputs) == 1
+        assert inputs[0].source == 'mic_audio'
+        assert Path(inputs[0].audio_path).name.startswith('mic-')
+
+    @pytest.mark.parametrize('source', ['agent_text', 'video_audio', ''])
+    def test_invalid_source_rejected(self, tmp_path, source):
+        with pytest.raises(ValueError, match='sorgente'):
+            self._sensor(tmp_path, FakeClock(), source=source)
+
+
+class FakePopen:
+    """subprocess.Popen finto: registra argv, stdout leggibile, arresto pulito."""
+
+    last_argv: tuple[str, ...] | None = None
+    stdout_payload: bytes = b''
+
+    def __init__(self, argv, executable=None, stdout=None, stderr=None):
+        import io
+
+        type(self).last_argv = tuple(argv)
+        self.argv = tuple(argv)
+        self.stdout_requested = stdout  # subprocess.PIPE nel chiamante reale
+        self.stdout = io.BytesIO(type(self).stdout_payload)
+        self.terminated = False
+
+    def terminate(self):
+        self.terminated = True
+
+    def wait(self, timeout=None):
+        return 0
+
+    def kill(self):
+        self.terminated = True
+
+
+class TestAudioCapture:
+    """F1: cattura di sistema via parec -d (monitor); mai il microfono per errore."""
+
+    @staticmethod
+    def _capture(callback, **kwargs):
+        from src.sensors.mic_sensor import AudioCapture
+
+        return AudioCapture(callback, **kwargs)
+
+    def test_parec_device_uses_minus_d_and_skips_sounddevice(self, monkeypatch):
+        from src.sensors import mic_sensor
+
+        monkeypatch.setattr(mic_sensor.shutil, 'which', lambda name: '/usr/bin/parec')
+        monkeypatch.setattr(mic_sensor.subprocess, 'Popen', FakePopen)
+        FakePopen.stdout_payload = b'\x01\x00' * mic_sensor.BYTES_PER_BLOCK  # due blocchi completi
+        blocks = []
+        capture = self._capture(blocks.append, parec_device='@DEFAULT_MONITOR@')
+        capture._try_sounddevice = lambda: pytest.fail('ramo sounddevice non deve essere tentato')
+        capture.start()
+        assert FakePopen.last_argv == (
+            'parec', '--rate=16000', '--channels=1', '--format=s16le', '-d', '@DEFAULT_MONITOR@'
+        )
+        assert capture.backend == 'parec'
+        assert capture.device_label == '@DEFAULT_MONITOR@'
+        capture.stop()  # join del lettore: dopo, tutti i blocchi sono consegnati
+        assert len(blocks) == 2
+        assert int(blocks[0][0]) == 1
+
+    def test_parec_without_device_records_mic_and_has_no_minus_d(self, monkeypatch):
+        from src.sensors import mic_sensor
+
+        monkeypatch.setattr(mic_sensor.shutil, 'which', lambda name: '/usr/bin/parec')
+        monkeypatch.setattr(mic_sensor.subprocess, 'Popen', FakePopen)
+        capture = self._capture(lambda block: None)
+        capture._try_sounddevice = lambda: False  # nessun sounddevice nell'ambiente test
+        capture.start()
+        # ATTENZIONE (contratto Orchestrazione): parec SENZA -d registra il microfono
+        assert '-d' not in FakePopen.last_argv
+        assert capture.device_label == 'default'
+        capture.stop()
+
+    def test_parec_device_unavailable_raises_without_sounddevice(self, monkeypatch):
+        from src.sensors import mic_sensor
+
+        monkeypatch.setattr(mic_sensor.shutil, 'which', lambda name: None)
+        capture = self._capture(lambda block: None, parec_device='@DEFAULT_MONITOR@')
+        capture._try_sounddevice = lambda: pytest.fail('ramo sounddevice non deve essere tentato')
+        with pytest.raises(RuntimeError, match='AUDIO_UNAVAILABLE'):
+            capture.start()
+
 
 class TestLiveInputQueue:
     def _item(self, path: str) -> LiveInput:
@@ -852,6 +1138,29 @@ class TestLiveInputQueue:
         assert queue.dropped == 1
         assert not Path(paths[0]).exists()  # WAV scartato non referenziato: eliminato
         assert all(Path(p).exists() for p in paths[1:])
+
+    def test_drop_deletes_sysaudio_wav_by_default(self, tmp_path):
+        from src.sensors.runner import LiveInputQueue, _delete_unreferenced_wav
+
+        path = tmp_path / 'sys-drop.wav'
+        path.write_bytes(b'RIFF')
+        _delete_unreferenced_wav(
+            LiveInput(id='in-sys-del', session_id='s1', source='system_audio',
+                      occurred_at=1.0, audio_path=str(path), duration_sec=1.0)
+        )
+        assert not path.exists()  # F1: la pulizia copre anche la cattura di sistema
+
+        queue = LiveInputQueue(maxsize=1)
+        first = LiveInput(id='in-s1', session_id='s1', source='system_audio',
+                          occurred_at=1.0, audio_path=str(path.parent / 'a.wav'), duration_sec=1.0)
+        second = LiveInput(id='in-s2', session_id='s1', source='system_audio',
+                           occurred_at=2.0, audio_path=str(path.parent / 'b.wav'), duration_sec=1.0)
+        (path.parent / 'a.wav').write_bytes(b'RIFF')
+        (path.parent / 'b.wav').write_bytes(b'RIFF')
+        queue.put(first)
+        queue.put(second)
+        assert queue.dropped == 1
+        assert not (path.parent / 'a.wav').exists()  # il più vecchio è stato rimosso
 
     def test_fifo_order_preserved(self, tmp_path):
         from src.sensors.runner import LiveInputQueue
