@@ -1122,11 +1122,15 @@ def main(argv: list[str] | None = None) -> int:
 
     captures = []
 
-    def make_audio_callback(sensor, enabled: Callable[[], bool]) -> Callable[[object], None]:
-        """Callback speculare per ogni sorgente audio: attiva → feed, pausa → flush."""
+    def make_audio_callback(sensor, enabled: bool) -> Callable[[object], None]:
+        """Callback speculare per ogni sorgente audio: attiva → feed, pausa → flush.
+
+        ``enabled`` è lo stato di cattura della sorgente al momento dell'avvio
+        (service.sensor_enabled(source)); il toggle a runtime passa dal flush
+        controllato del sensore, non da qui."""
 
         def on_block(block) -> None:
-            if enabled() and not service.session_suspended:
+            if enabled and not service.session_suspended:
                 for item in sensor.feed_block(block):
                     enqueue(item)
             else:
